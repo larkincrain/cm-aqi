@@ -1,0 +1,38 @@
+# fly.toml — Configuration for deploying to Fly.io
+#
+# Fly.io is a platform that runs your app in containers close to your users.
+# It's well-suited for Phoenix/Elixir apps because it supports:
+# - WebSocket connections (needed for LiveView)
+# - Persistent volumes (for the database)
+# - Environment variable management
+#
+# Deploy with:
+#   fly deploy
+#
+# See: https://fly.io/docs/elixir/getting-started/
+
+app = "cm-aqi"
+primary_region = "sin"  # Singapore — closest region to Chiang Mai
+
+[build]
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 1000
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[env]
+  PHX_SERVER = "true"
+  PORT = "4000"

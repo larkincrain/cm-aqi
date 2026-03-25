@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content={get_csrf_token()} />
+    <meta
+      name="description"
+      content="Real-time air quality monitoring for Chiang Mai, Thailand. Track PM2.5, AQI levels, and get LINE notifications during burn season."
+    />
+    <.live_title default="CM AQI" suffix=" — Chiang Mai Air Quality">
+      {assigns[:page_title]}
+    </.live_title>
+    <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
+    <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
+    </script>
+    <%!--
+      Chart.js is loaded from a CDN for rendering historical AQI charts.
+      We use the lightweight bundle which includes all chart types we need.
+    --%>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js">
+    </script>
+  </head>
+  <body class="bg-base-100 min-h-screen">
+    {@inner_content}
+  </body>
+</html>
