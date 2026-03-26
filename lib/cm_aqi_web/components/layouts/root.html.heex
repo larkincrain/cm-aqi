@@ -20,6 +20,20 @@
     --%>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js">
     </script>
+    <script>
+      // Apply saved theme immediately to prevent flash of wrong theme.
+      // Runs before the page paints because it's a synchronous script in <head>.
+      (function() {
+        var saved = localStorage.getItem("theme") || "system";
+        var theme;
+        if (saved === "system") {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        } else {
+          theme = saved;
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
   </head>
   <body class="bg-base-100 min-h-screen">
     {@inner_content}

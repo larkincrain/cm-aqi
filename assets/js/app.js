@@ -130,6 +130,34 @@ const liveSocket = new LiveSocket("/live", Socket, {
   hooks: {...colocatedHooks, ...Hooks},
 })
 
+// ============================================================================
+// Theme Toggle
+// ============================================================================
+// Handles the "phx:set-theme" custom event dispatched by the theme toggle buttons.
+// Reads the chosen theme from the clicked button's data-phx-theme attribute,
+// saves it to localStorage, and applies the data-theme attribute to <html>.
+
+function applyTheme(setting) {
+  localStorage.setItem("theme", setting)
+  let theme
+  if (setting === "system") {
+    theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+  } else {
+    theme = setting
+  }
+  document.documentElement.setAttribute("data-theme", theme)
+}
+
+window.addEventListener("phx:set-theme", (e) => {
+  const setting = e.target.dataset.phxTheme
+  if (setting) applyTheme(setting)
+})
+
+// When the OS preference changes and the user has "system" selected, update live
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (localStorage.getItem("theme") === "system") applyTheme("system")
+})
+
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
