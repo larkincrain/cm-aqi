@@ -63,6 +63,7 @@ defmodule CmAqiWeb.Router do
     # over a WebSocket connection without full page reloads.
     live "/", DashboardLive, :index
     live "/sensors", SensorsLive, :index
+    live "/sensors/:station_id", SensorDetailLive, :show
     live "/subscribe", SubscribeLive, :index
     live "/about", AboutLive, :index
   end

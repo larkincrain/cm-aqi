@@ -245,9 +245,10 @@ defmodule CmAqiWeb.DashboardLive do
       </div>
 
       <div class="flex gap-4 overflow-x-auto pb-2 -mx-2 px-2 snap-x snap-mandatory">
-        <div
+        <a
           :for={{station_id, station} <- @stations}
-          class="card bg-base-200 shadow-md overflow-hidden flex-shrink-0 w-72 snap-start"
+          href={"/sensors/#{station_id}"}
+          class="card bg-base-200 shadow-md overflow-hidden flex-shrink-0 w-72 snap-start hover:bg-base-300 transition-colors"
         >
           <div class="h-2" style={"background-color: #{station.color}"}></div>
 
@@ -288,7 +289,7 @@ defmodule CmAqiWeb.DashboardLive do
               <canvas></canvas>
             </div>
           </div>
-        </div>
+        </a>
       </div>
     </div>
     """
@@ -361,6 +362,7 @@ defmodule CmAqiWeb.DashboardLive do
           nil ->
             # Inactive station — grey marker
             %{
+              id: s.uid,
               lat: s.lat,
               lng: s.lng,
               name: s.name,
@@ -373,6 +375,7 @@ defmodule CmAqiWeb.DashboardLive do
           active ->
             # Active station — colored by AQI
             %{
+              id: s.uid,
               lat: s.lat,
               lng: s.lng,
               name: active.name,

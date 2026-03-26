@@ -102,18 +102,17 @@ defmodule CmAqiWeb.SensorsLive do
 
       <%!-- Station List --%>
       <div class="space-y-2">
-        <div
+        <a
           :for={station <- @stations}
-          class="flex items-center gap-3 p-3 bg-base-200 rounded-lg"
+          href={"/sensors/#{station.station_id}"}
+          class="flex items-center gap-3 p-3 bg-base-200 rounded-lg hover:bg-base-300 transition-colors"
         >
-          <%!-- Color dot --%>
           <div
             class="w-3 h-3 rounded-full shrink-0"
             style={"background-color: #{station.color}"}
           >
           </div>
 
-          <%!-- Station info --%>
           <div class="flex-1 min-w-0">
             <p class="text-sm font-medium truncate">{station.name}</p>
             <p class="text-xs text-base-content/50">
@@ -121,14 +120,13 @@ defmodule CmAqiWeb.SensorsLive do
             </p>
           </div>
 
-          <%!-- AQI value --%>
           <div class="text-right shrink-0">
             <span class="text-xl font-bold" style={"color: #{station.color}"}>
               {station.aqi_value || "—"}
             </span>
             <span class="text-xs text-base-content/50 ml-1">AQI</span>
           </div>
-        </div>
+        </a>
       </div>
 
       <div :if={@stations == []} class="text-center py-8">

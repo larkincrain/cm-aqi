@@ -192,11 +192,18 @@ const Hooks = {
           }
 
           marker.bindPopup(
-            `<strong>${station.name}</strong><br/>` +
+            `<a href="/sensors/${station.id}" class="font-bold hover:underline">${station.name}</a><br/>` +
             (isActive
               ? `AQI: <strong style="color:${color}">${station.aqi || "—"}</strong><br/>${station.category || "No Data"}`
               : `<em style="color:#999">Offline</em>`)
           )
+
+          // Click the marker circle itself to navigate to the detail page
+          if (isActive && station.id) {
+            marker.on("click", () => {
+              window.location.href = "/sensors/" + station.id
+            })
+          }
 
           this.markers.push(marker)
         })
@@ -228,6 +235,54 @@ const Hooks = {
       if (this.map) {
         this.map.remove()
       }
+    }
+  },
+
+  // SensorMap: A simple single-marker map for the sensor detail page.
+  SensorMap: {
+    mounted() {
+      if (typeof L === "undefined") return
+
+      const lat = parseFloat(this.el.dataset.lat)
+      const lng = parseFloat(this.el.dataset.lng)
+      if (isNaN(lat) || isNaN(lng)) return
+
+      const color = this.el.dataset.color || "#808080"
+      const aqi = this.el.dataset.aqi
+      const name = this.el.dataset.name
+
+      this.map = L.map(this.el).setView([lat, lng], 14)
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 18,
+      }).addTo(this.map)
+
+      const marker = L.circleMarker([lat, lng], {
+        radius: 16,
+        fillColor: color,
+        color: "#fff",
+        weight: 2,
+        fillOpacity: 0.9,
+      }).addTo(this.map)
+
+      if (aqi) {
+        marker.bindTooltip(aqi, {
+          permanent: true,
+          direction: "center",
+          className: "aqi-marker-label",
+        })
+      }
+
+      if (name) {
+        marker.bindPopup(`<strong>${name}</strong>`)
+      }
+
+      requestAnimationFrame(() => this.map.invalidateSize())
+    },
+
+    destroyed() {
+      if (this.map) this.map.remove()
     }
   }
 }
