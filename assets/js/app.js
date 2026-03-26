@@ -144,15 +144,33 @@ const Hooks = {
       requestAnimationFrame(() => this.map.invalidateSize())
 
       this.markers = []
+      this.heatLayer = null
 
       this.handleEvent("map_data", (data) => {
         // Clear old markers
         this.markers.forEach(m => m.remove())
         this.markers = []
 
+        // Clear old heatmap
+        if (this.heatLayer) {
+          this.map.removeLayer(this.heatLayer)
+          this.heatLayer = null
+        }
+
+        // Build heatmap data from active stations
+        // Each point is [lat, lng, intensity] where intensity is AQI/500
+        const heatPoints = []
+
         data.markers.forEach(station => {
           const color = station.color || "#808080"
           const isActive = station.active
+
+          // Add to heatmap if active with valid AQI
+          if (isActive && station.aqi != null) {
+            // Normalize AQI to 0-1 range for heat intensity (cap at 500)
+            const intensity = Math.min(station.aqi, 500) / 500
+            heatPoints.push([station.lat, station.lng, intensity])
+          }
 
           // Active stations: large, opaque. Inactive: smaller, semi-transparent.
           const marker = L.circleMarker([station.lat, station.lng], {
@@ -182,6 +200,24 @@ const Hooks = {
 
           this.markers.push(marker)
         })
+
+        // Add heatmap layer beneath the markers
+        if (typeof L.heatLayer === "function" && heatPoints.length > 0) {
+          this.heatLayer = L.heatLayer(heatPoints, {
+            radius: 35,
+            blur: 25,
+            maxZoom: 15,
+            max: 1.0,
+            gradient: {
+              0.0: "#198754",   // Good — green
+              0.2: "#ffc107",   // Moderate — yellow
+              0.3: "#fd7e14",   // USG — orange
+              0.4: "#dc3545",   // Unhealthy — red
+              0.6: "#6f42c1",   // Very Unhealthy — purple
+              1.0: "#842029",   // Hazardous — dark red
+            }
+          }).addTo(this.map)
+        }
 
         // Recalculate size after markers are added
         this.map.invalidateSize()
