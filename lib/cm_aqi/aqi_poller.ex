@@ -94,6 +94,17 @@ defmodule CmAqi.AqiPoller do
     GenServer.cast(__MODULE__, :poll_now)
   end
 
+  @doc """
+  Returns the full list of Chiang Mai stations discovered by the last search,
+  including inactive ones. Each entry is a map with :uid, :name, :lat, :lng, :active.
+
+  Used by the dashboard to show all stations on the map (inactive ones greyed out).
+  """
+  @spec list_all_stations() :: [map()]
+  def list_all_stations do
+    GenServer.call(__MODULE__, :list_all_stations)
+  end
+
   # ============================================================================
   # Server Callbacks (GenServer Behaviour)
   # ============================================================================
@@ -132,7 +143,8 @@ defmodule CmAqi.AqiPoller do
      %{
        last_poll_at: nil,
        poll_count: 0,
-       error_count: 0
+       error_count: 0,
+       all_stations: []
      }}
   end
 
@@ -147,8 +159,8 @@ defmodule CmAqi.AqiPoller do
     Logger.info("AqiPoller: Starting poll ##{state.poll_count + 1}")
 
     case fetch_and_store_readings() do
-      {:ok, readings} ->
-        Logger.info("AqiPoller: Successfully stored #{length(readings)} readings")
+      {:ok, readings, all_stations} ->
+        Logger.info("AqiPoller: Successfully stored #{length(readings)} readings from #{length(all_stations)} stations")
 
         # Broadcast to PubSub so LiveView dashboards update in real-time.
         # Any process subscribed to "aqi:updates" will receive this message.
@@ -157,13 +169,14 @@ defmodule CmAqi.AqiPoller do
         # Schedule the next regular poll
         schedule_poll(@poll_interval)
 
-        # Update state: reset error count, record success
+        # Update state: reset error count, record success, store full station list
         {:noreply,
          %{
            state
            | last_poll_at: DateTime.utc_now(),
              poll_count: state.poll_count + 1,
-             error_count: 0
+             error_count: 0,
+             all_stations: all_stations
          }}
 
       {:error, reason} ->
@@ -174,6 +187,11 @@ defmodule CmAqi.AqiPoller do
 
         {:noreply, %{state | error_count: state.error_count + 1}}
     end
+  end
+
+  @impl true
+  def handle_call(:list_all_stations, _from, state) do
+    {:reply, state.all_stations, state}
   end
 
   @doc """
@@ -205,7 +223,7 @@ defmodule CmAqi.AqiPoller do
   # 4. Upsert all readings into the database
   #
   # Returns {:ok, readings} or {:error, reason}.
-  @spec fetch_and_store_readings() :: {:ok, list()} | {:error, any()}
+  @spec fetch_and_store_readings() :: {:ok, list(), list()} | {:error, any()}
   defp fetch_and_store_readings do
     client = CmAqi.HttpClient.client()
     token = aqicn_token()
@@ -218,10 +236,10 @@ defmodule CmAqi.AqiPoller do
       # errors (e.g., Postgres is down) raise exceptions instead of returning errors.
       # Without this, a DB outage would crash the GenServer in a tight loop.
       try do
-        with {:ok, stations} <- search_stations(client, token),
-             {:ok, readings} <- fetch_station_details(client, token, stations) do
+        with {:ok, all_stations, active_stations} <- search_stations(client, token),
+             {:ok, readings} <- fetch_station_details(client, token, active_stations) do
           stored = AqiReadings.upsert_readings(readings)
-          {:ok, stored}
+          {:ok, stored, all_stations}
         end
       rescue
         e in DBConnection.ConnectionError ->
@@ -236,23 +254,31 @@ defmodule CmAqi.AqiPoller do
   # Step 1: Search for all Chiang Mai monitoring stations.
   #
   # The AQICN search endpoint returns a list of stations matching a keyword.
-  # Each station has a uid, current AQI, name, and coordinates.
-  # We filter out stations with no current data (aqi == "-").
-  @spec search_stations(module(), String.t()) :: {:ok, list(map())} | {:error, any()}
+  # Returns {all_stations, active_stations} where all_stations is the full
+  # list (for the map) and active_stations are those with current data (for fetching).
+  @spec search_stations(module(), String.t()) ::
+          {:ok, list(map()), list(map())} | {:error, any()}
   defp search_stations(client, token) do
     url = "#{@waqi_base_url}/search/?keyword=chiang+mai&token=#{token}"
 
     case client.get(url, [{"Accept", "application/json"}]) do
       {:ok, %{status: 200, body: %{"status" => "ok", "data" => data}}} when is_list(data) ->
-        # Filter out stations with no current data (aqi == "-" means offline)
+        # Parse all stations into a clean format for the map
+        all_stations = Enum.map(data, &parse_search_station/1)
+
+        # Only fetch detailed data for stations that have current readings
         active_stations =
           Enum.filter(data, fn station ->
             aqi = get_in(station, ["aqi"])
             aqi != "-" and aqi != nil
           end)
 
-        Logger.info("AqiPoller: Found #{length(active_stations)} active Chiang Mai stations")
-        {:ok, active_stations}
+        Logger.info(
+          "AqiPoller: Found #{length(all_stations)} total stations, " <>
+            "#{length(active_stations)} active"
+        )
+
+        {:ok, all_stations, active_stations}
 
       {:ok, %{status: 200, body: %{"status" => "error", "data" => msg}}} ->
         {:error, "AQICN API error: #{msg}"}
@@ -263,6 +289,23 @@ defmodule CmAqi.AqiPoller do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # Parses a station from the search response into a clean map.
+  @spec parse_search_station(map()) :: map()
+  defp parse_search_station(station) do
+    uid = get_in(station, ["uid"])
+    aqi = get_in(station, ["aqi"])
+    name = get_in(station, ["station", "name"]) || "Station #{uid}"
+    geo = get_in(station, ["station", "geo"]) || []
+
+    %{
+      uid: to_string(uid),
+      name: name,
+      lat: Enum.at(geo, 0),
+      lng: Enum.at(geo, 1),
+      active: aqi != "-" and aqi != nil
+    }
   end
 
   # Step 2: Fetch detailed data for each station.

@@ -138,6 +138,11 @@ const Hooks = {
         maxZoom: 18,
       }).addTo(this.map)
 
+      // Leaflet can miscalculate tile positions if the container size
+      // isn't fully resolved when the map initializes. Calling
+      // invalidateSize() after a frame ensures tiles render correctly.
+      requestAnimationFrame(() => this.map.invalidateSize())
+
       this.markers = []
 
       this.handleEvent("map_data", (data) => {
@@ -147,32 +152,39 @@ const Hooks = {
 
         data.markers.forEach(station => {
           const color = station.color || "#808080"
+          const isActive = station.active
 
-          // Create a circle marker colored by AQI
+          // Active stations: large, opaque. Inactive: smaller, semi-transparent.
           const marker = L.circleMarker([station.lat, station.lng], {
-            radius: 14,
+            radius: isActive ? 14 : 8,
             fillColor: color,
             color: "#fff",
-            weight: 2,
-            opacity: 1,
-            fillOpacity: 0.9,
+            weight: isActive ? 2 : 1,
+            opacity: isActive ? 1 : 0.6,
+            fillOpacity: isActive ? 0.9 : 0.4,
           }).addTo(this.map)
 
-          // Add AQI value as a tooltip that's always visible
-          marker.bindTooltip(String(station.aqi || "—"), {
-            permanent: true,
-            direction: "center",
-            className: "aqi-marker-label",
-          })
+          // Show AQI value on active markers, nothing on inactive
+          if (isActive && station.aqi != null) {
+            marker.bindTooltip(String(station.aqi), {
+              permanent: true,
+              direction: "center",
+              className: "aqi-marker-label",
+            })
+          }
 
           marker.bindPopup(
             `<strong>${station.name}</strong><br/>` +
-            `AQI: <strong style="color:${color}">${station.aqi || "—"}</strong><br/>` +
-            `${station.category || "No Data"}`
+            (isActive
+              ? `AQI: <strong style="color:${color}">${station.aqi || "—"}</strong><br/>${station.category || "No Data"}`
+              : `<em style="color:#999">Offline</em>`)
           )
 
           this.markers.push(marker)
         })
+
+        // Recalculate size after markers are added
+        this.map.invalidateSize()
       })
     },
 

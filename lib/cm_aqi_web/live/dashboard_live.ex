@@ -36,6 +36,7 @@ defmodule CmAqiWeb.DashboardLive do
 
   alias CmAqi.AqiReadings
   alias CmAqi.AqiReadings.Calculator
+  alias CmAqi.AqiPoller
 
   # ============================================================================
   # LiveView Lifecycle Callbacks
@@ -341,20 +342,48 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   # Pushes station marker data to the Leaflet map hook.
+  # Merges active station readings with the full station list from the poller
+  # so inactive stations appear greyed out on the map.
   @spec push_map_data(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
-  defp push_map_data(socket, stations) do
+  defp push_map_data(socket, active_stations) do
+    # Get the full list of all stations (active + inactive) from the poller
+    all_stations = AqiPoller.list_all_stations()
+
+    # Build a lookup of active station data by uid
+    active_lookup =
+      active_stations
+      |> Enum.into(%{}, fn {station_id, s} -> {station_id, s} end)
+
     markers =
-      stations
-      |> Enum.filter(fn {_id, s} -> s.latitude != nil and s.longitude != nil end)
-      |> Enum.map(fn {_id, s} ->
-        %{
-          lat: s.latitude,
-          lng: s.longitude,
-          name: s.name,
-          aqi: s.aqi_value,
-          color: s.color,
-          category: s.category
-        }
+      all_stations
+      |> Enum.filter(fn s -> s.lat != nil and s.lng != nil end)
+      |> Enum.map(fn s ->
+        # Check if this station has active readings
+        case Map.get(active_lookup, s.uid) do
+          nil ->
+            # Inactive station — grey marker
+            %{
+              lat: s.lat,
+              lng: s.lng,
+              name: s.name,
+              aqi: nil,
+              color: "#808080",
+              category: "Offline",
+              active: false
+            }
+
+          active ->
+            # Active station — colored by AQI
+            %{
+              lat: s.lat,
+              lng: s.lng,
+              name: active.name,
+              aqi: active.aqi_value,
+              color: active.color,
+              category: active.category,
+              active: true
+            }
+        end
       end)
 
     push_event(socket, "map_data", %{markers: markers})

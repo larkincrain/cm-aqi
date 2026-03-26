@@ -62,62 +62,73 @@ defmodule CmAqiWeb.AboutLive do
             into a standardized 0-500 scale:
           </p>
 
-          <div class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead>
-                <tr>
-                  <th>AQI Range</th>
-                  <th>Category</th>
-                  <th>Health Impact</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>
-                    <span class="badge text-white" style="background-color: #00e400">0-50</span>
-                  </td>
-                  <td class="font-semibold">Good</td>
-                  <td>Air quality is satisfactory. Enjoy outdoor activities!</td>
-                </tr>
-                <tr>
-                  <td>
-                    <span class="badge" style="background-color: #ffff00">51-100</span>
-                  </td>
-                  <td class="font-semibold">Moderate</td>
-                  <td>
-                    Acceptable. Unusually sensitive people should limit prolonged outdoor exertion.
-                  </td>
-                </tr>
-                <tr>
-                  <td>
-                    <span class="badge text-white" style="background-color: #ff7e00">101-150</span>
-                  </td>
-                  <td class="font-semibold">Unhealthy for Sensitive Groups</td>
-                  <td>Sensitive groups may experience health effects. Consider wearing a mask.</td>
-                </tr>
-                <tr>
-                  <td>
-                    <span class="badge text-white" style="background-color: #ff0000">151-200</span>
-                  </td>
-                  <td class="font-semibold">Unhealthy</td>
-                  <td>Everyone may begin to experience health effects. Wear a mask outdoors.</td>
-                </tr>
-                <tr>
-                  <td>
-                    <span class="badge text-white" style="background-color: #8f3f97">201-300</span>
-                  </td>
-                  <td class="font-semibold">Very Unhealthy</td>
-                  <td>Health alert: more serious effects for everyone. Avoid outdoor activity.</td>
-                </tr>
-                <tr>
-                  <td>
-                    <span class="badge text-white" style="background-color: #7e0023">301-500</span>
-                  </td>
-                  <td class="font-semibold">Hazardous</td>
-                  <td>Health emergency. Stay indoors with air purification.</td>
-                </tr>
-              </tbody>
-            </table>
+          <div class="space-y-3">
+            <div class="flex items-start gap-3 p-3 rounded-lg bg-base-300">
+              <span class="badge text-white shrink-0" style="background-color: #198754">
+                0–50
+              </span>
+              <div>
+                <div class="font-semibold">Good</div>
+                <div class="text-sm text-base-content/70">
+                  Air quality is satisfactory. Enjoy outdoor activities!
+                </div>
+              </div>
+            </div>
+            <div class="flex items-start gap-3 p-3 rounded-lg bg-base-300">
+              <span class="badge shrink-0" style="background-color: #ffc107">
+                51–100
+              </span>
+              <div>
+                <div class="font-semibold">Moderate</div>
+                <div class="text-sm text-base-content/70">
+                  Acceptable. Unusually sensitive people should limit prolonged outdoor exertion.
+                </div>
+              </div>
+            </div>
+            <div class="flex items-start gap-3 p-3 rounded-lg bg-base-300">
+              <span class="badge text-white shrink-0" style="background-color: #fd7e14">
+                101–150
+              </span>
+              <div>
+                <div class="font-semibold">Unhealthy for Sensitive Groups</div>
+                <div class="text-sm text-base-content/70">
+                  Sensitive groups may experience health effects. Consider wearing a mask.
+                </div>
+              </div>
+            </div>
+            <div class="flex items-start gap-3 p-3 rounded-lg bg-base-300">
+              <span class="badge text-white shrink-0" style="background-color: #dc3545">
+                151–200
+              </span>
+              <div>
+                <div class="font-semibold">Unhealthy</div>
+                <div class="text-sm text-base-content/70">
+                  Everyone may begin to experience health effects. Wear a mask outdoors.
+                </div>
+              </div>
+            </div>
+            <div class="flex items-start gap-3 p-3 rounded-lg bg-base-300">
+              <span class="badge text-white shrink-0" style="background-color: #6f42c1">
+                201–300
+              </span>
+              <div>
+                <div class="font-semibold">Very Unhealthy</div>
+                <div class="text-sm text-base-content/70">
+                  Health alert: more serious effects for everyone. Avoid outdoor activity.
+                </div>
+              </div>
+            </div>
+            <div class="flex items-start gap-3 p-3 rounded-lg bg-base-300">
+              <span class="badge text-white shrink-0" style="background-color: #842029">
+                301–500
+              </span>
+              <div>
+                <div class="font-semibold">Hazardous</div>
+                <div class="text-sm text-base-content/70">
+                  Health emergency. Stay indoors with air purification.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
