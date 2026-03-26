@@ -87,6 +87,7 @@ defmodule CmAqiWeb.DashboardLive do
         socket
         |> push_chart_data(stations)
         |> push_average_chart_data()
+        |> push_map_data(stations)
       else
         socket
       end
@@ -121,11 +122,12 @@ defmodule CmAqiWeb.DashboardLive do
         last_updated: DateTime.utc_now()
       )
 
-    # Push updated chart data whenever new readings arrive
+    # Push updated chart and map data whenever new readings arrive
     socket =
       socket
       |> push_chart_data(stations)
       |> push_average_chart_data()
+      |> push_map_data(stations)
 
     {:noreply, socket}
   end
@@ -222,7 +224,16 @@ defmodule CmAqiWeb.DashboardLive do
         </div>
       </div>
 
-      <%!-- Station Cards Grid --%>
+      <%!-- Map --%>
+      <div
+        id="aqi-map"
+        phx-hook="AqiMap"
+        phx-update="ignore"
+        class="rounded-lg overflow-hidden shadow-md h-72 sm:h-80"
+      >
+      </div>
+
+      <%!-- Station Cards — Horizontal Scroll --%>
       <div :if={@stations == %{}} class="text-center py-12">
         <p class="text-lg text-base-content/60">
           No air quality data available yet.
@@ -232,81 +243,48 @@ defmodule CmAqiWeb.DashboardLive do
         </p>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div class="flex gap-4 overflow-x-auto pb-2 -mx-2 px-2 snap-x snap-mandatory">
         <div
           :for={{station_id, station} <- @stations}
-          class="card bg-base-200 shadow-md overflow-hidden"
+          class="card bg-base-200 shadow-md overflow-hidden flex-shrink-0 w-72 snap-start"
         >
-          <%!-- Color-coded header bar based on AQI category --%>
-          <div
-            class="h-2"
-            style={"background-color: #{station.color}"}
-          >
-          </div>
+          <div class="h-2" style={"background-color: #{station.color}"}></div>
 
           <div class="card-body p-4">
-            <%!-- Station Name --%>
-            <h2 class="card-title text-base">{station.name}</h2>
+            <h2 class="card-title text-sm leading-tight line-clamp-2">{station.name}</h2>
 
-            <%!-- AQI Value (large, prominent) --%>
             <div class="flex items-center justify-between">
               <div>
-                <span
-                  class="text-4xl font-bold"
-                  style={"color: #{station.color}"}
-                >
+                <span class="text-3xl font-bold" style={"color: #{station.color}"}>
                   {station.aqi_value || "—"}
                 </span>
-                <span class="text-sm text-base-content/60 ml-2">AQI</span>
+                <span class="text-xs text-base-content/60 ml-1">AQI</span>
               </div>
-              <%!-- Category Badge --%>
               <span
-                class="badge badge-lg text-white text-xs"
+                class="badge text-white text-xs"
                 style={"background-color: #{station.color}"}
               >
                 {station.category || "No Data"}
               </span>
             </div>
 
-            <%!-- Raw Values --%>
-            <div class="grid grid-cols-2 gap-2 mt-2 text-sm">
-              <div class="bg-base-300 rounded p-2">
+            <div class="grid grid-cols-2 gap-2 mt-1 text-xs">
+              <div class="bg-base-300 rounded p-1.5">
                 <span class="text-base-content/60">PM2.5</span>
-                <span class="font-semibold ml-1">
-                  {format_value(station.pm25)} µg/m³
-                </span>
+                <span class="font-semibold ml-1">{format_value(station.pm25)}</span>
               </div>
-              <div class="bg-base-300 rounded p-2">
+              <div class="bg-base-300 rounded p-1.5">
                 <span class="text-base-content/60">PM10</span>
-                <span class="font-semibold ml-1">
-                  {format_value(station.pm10)} µg/m³
-                </span>
+                <span class="font-semibold ml-1">{format_value(station.pm10)}</span>
               </div>
             </div>
 
-            <%!-- Last Updated --%>
-            <p class="text-xs text-base-content/40 mt-2">
-              Updated: {format_datetime(station.measured_at)}
-            </p>
-
-            <%!-- Historical Chart --%>
-            <%!--
-              `phx-hook` connects this element to a JavaScript "Hook".
-              Hooks let you run custom JS code when LiveView elements
-              are mounted, updated, or destroyed. We use this to render
-              a Chart.js chart.
-
-              `phx-update="ignore"` tells LiveView not to touch this
-              element's inner HTML — Chart.js manages it.
-
-              The `data-*` attributes pass data from Elixir to JavaScript.
-            --%>
             <div
               id={"chart-#{station_id}"}
               phx-hook="AqiChart"
               phx-update="ignore"
               data-station-id={station_id}
-              class="mt-2 h-32"
+              class="mt-2 h-24"
             >
               <canvas></canvas>
             </div>
@@ -362,6 +340,26 @@ defmodule CmAqiWeb.DashboardLive do
     push_event(socket, "chart_data:average", %{labels: labels, values: values})
   end
 
+  # Pushes station marker data to the Leaflet map hook.
+  @spec push_map_data(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  defp push_map_data(socket, stations) do
+    markers =
+      stations
+      |> Enum.filter(fn {_id, s} -> s.latitude != nil and s.longitude != nil end)
+      |> Enum.map(fn {_id, s} ->
+        %{
+          lat: s.latitude,
+          lng: s.longitude,
+          name: s.name,
+          aqi: s.aqi_value,
+          color: s.color,
+          category: s.category
+        }
+      end)
+
+    push_event(socket, "map_data", %{markers: markers})
+  end
+
   # Groups flat reading records into a map keyed by station_id.
   # Each station entry has: name, pm25, pm10, aqi_value, category, color, measured_at
   @spec group_readings_by_station(list()) :: map()
@@ -387,6 +385,8 @@ defmodule CmAqiWeb.DashboardLive do
          aqi_value: aqi_value,
          category: category,
          color: color,
+         latitude: if(primary, do: primary.latitude, else: nil),
+         longitude: if(primary, do: primary.longitude, else: nil),
          measured_at: if(primary, do: primary.measured_at, else: nil)
        }}
     end)

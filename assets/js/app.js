@@ -120,6 +120,67 @@ const Hooks = {
         this.chart.destroy()
       }
     }
+  },
+
+  // AqiMap: Renders a Leaflet map with colored markers for each sensor station.
+  AqiMap: {
+    mounted() {
+      if (typeof L === "undefined") return
+
+      // Center on Chiang Mai
+      this.map = L.map(this.el, {
+        zoomControl: true,
+        scrollWheelZoom: true,
+      }).setView([18.79, 98.98], 12)
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 18,
+      }).addTo(this.map)
+
+      this.markers = []
+
+      this.handleEvent("map_data", (data) => {
+        // Clear old markers
+        this.markers.forEach(m => m.remove())
+        this.markers = []
+
+        data.markers.forEach(station => {
+          const color = station.color || "#808080"
+
+          // Create a circle marker colored by AQI
+          const marker = L.circleMarker([station.lat, station.lng], {
+            radius: 14,
+            fillColor: color,
+            color: "#fff",
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9,
+          }).addTo(this.map)
+
+          // Add AQI value as a tooltip that's always visible
+          marker.bindTooltip(String(station.aqi || "—"), {
+            permanent: true,
+            direction: "center",
+            className: "aqi-marker-label",
+          })
+
+          marker.bindPopup(
+            `<strong>${station.name}</strong><br/>` +
+            `AQI: <strong style="color:${color}">${station.aqi || "—"}</strong><br/>` +
+            `${station.category || "No Data"}`
+          )
+
+          this.markers.push(marker)
+        })
+      })
+    },
+
+    destroyed() {
+      if (this.map) {
+        this.map.remove()
+      }
+    }
   }
 }
 
