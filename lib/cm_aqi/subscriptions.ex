@@ -154,4 +154,25 @@ defmodule CmAqi.Subscriptions do
     )
     |> Repo.all()
   end
+
+  @doc """
+  Returns all active subscribers with their threshold values.
+
+  Used by AlertBroadcaster to check each subscriber's personal threshold
+  against city-wide AQI crossings.
+
+  ## Returns
+
+  A list of `{line_user_id_string, display_name, alert_threshold}` tuples.
+  """
+  @spec get_all_active_subscribers() :: [{String.t(), String.t(), integer()}]
+  def get_all_active_subscribers do
+    from(s in LineSubscription,
+      join: u in LineUser,
+      on: s.line_user_id == u.id,
+      where: s.active == true,
+      select: {u.line_user_id, u.display_name, s.alert_threshold}
+    )
+    |> Repo.all()
+  end
 end

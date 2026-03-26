@@ -1,33 +1,28 @@
 defmodule CmAqi.AlertBroadcaster do
   @moduledoc """
-  A GenServer that monitors AQI changes and sends LINE notifications when
-  thresholds are crossed.
+  A GenServer that monitors city-wide AQI changes and sends LINE notifications
+  when the average AQI crosses a subscriber's personal threshold.
 
   ## How It Works
 
   1. Subscribes to the "aqi:updates" PubSub topic on startup
-  2. When new readings arrive (broadcast by AqiPoller), checks each reading
-  3. Compares the new AQI to the previous reading's AQI for that station
-  4. If the AQI crossed a threshold boundary (e.g., went from 145 → 160,
-     crossing the 151 "Unhealthy" threshold), triggers notifications
-  5. Queries all active subscribers whose threshold is ≤ the new AQI
-  6. Sends each subscriber a LINE push notification
+  2. When new readings arrive, computes the city-wide average PM2.5 AQI
+  3. Compares the new average to the previous average
+  4. For each active subscriber, checks if their personal threshold was crossed
+  5. Sends LINE push notifications for threshold crossings (escalation or clearing)
 
-  ## Threshold Crossing Detection
+  ## Morning Alert (7am ICT)
 
-  We detect TWO types of crossings:
-  - **Escalation**: AQI went UP past a threshold (air got worse)
-  - **Clearing**: AQI went DOWN past the 150 mark (air improved to Moderate or better)
+  Every day at 7:00 AM ICT (00:00 UTC), this GenServer checks the current
+  average AQI. If it's at or above a subscriber's threshold, they receive a
+  morning briefing notification so they know the day is starting with poor air.
 
-  We only notify on CROSSINGS, not on every reading. If the AQI stays at 160
-  for 3 readings in a row, we only send one notification (on the first reading).
+  ## Why City Average?
 
-  ## Why a Separate GenServer?
-
-  Separating the poller from the broadcaster follows the Single Responsibility
-  Principle. The poller is responsible for fetching and storing data. The
-  broadcaster is responsible for notification logic. This makes each easier
-  to test and debug independently.
+  Individual stations can spike or have sensor errors. Using the average across
+  all Chiang Mai stations gives a more representative picture of city-wide air
+  quality, which is what matters for deciding whether to stay indoors or wear
+  a mask.
   """
 
   use GenServer
@@ -38,11 +33,11 @@ defmodule CmAqi.AlertBroadcaster do
   alias CmAqi.Subscriptions
   alias CmAqi.LineClient
 
-  # The AQI thresholds we monitor for crossings
-  @alert_thresholds [151, 201, 301]
+  # Chiang Mai is UTC+7
+  @ict_offset_hours 7
 
-  # The "clearing" threshold — when AQI drops below this, notify subscribers
-  @clearing_threshold 150
+  # The hour (in ICT / local time) to send the morning alert
+  @morning_alert_hour 7
 
   # ============================================================================
   # Client API
@@ -61,140 +56,202 @@ defmodule CmAqi.AlertBroadcaster do
   def init(_opts) do
     Logger.info("AlertBroadcaster starting — subscribing to aqi:updates")
 
-    # Subscribe to the PubSub topic. This means whenever AqiPoller broadcasts
-    # {:readings_updated, readings}, this GenServer will receive it in handle_info.
+    # Subscribe to the PubSub topic. Whenever AqiPoller broadcasts
+    # {:readings_updated, readings}, this GenServer receives it in handle_info.
     Phoenix.PubSub.subscribe(CmAqi.PubSub, "aqi:updates")
 
-    {:ok, %{}}
+    # Schedule the first morning alert
+    schedule_morning_alert()
+
+    {:ok, %{previous_avg_aqi: nil}}
   end
 
-  @doc """
-  Handles incoming reading updates from PubSub.
-
-  This is triggered every time AqiPoller successfully fetches and stores new
-  readings. We check each reading for threshold crossings.
-  """
   @impl true
-  def handle_info({:readings_updated, readings}, state) do
+
+  # Handles incoming reading updates from PubSub.
+  # Computes the city-wide average PM2.5 AQI and checks if any subscriber's
+  # personal threshold was crossed compared to the previous average.
+  def handle_info({:readings_updated, _readings}, state) do
+    avg_aqi = AqiReadings.average_current_aqi()
+
     Logger.debug(
-      "AlertBroadcaster: Checking #{length(readings)} readings for threshold crossings"
+      "AlertBroadcaster: City average AQI = #{inspect(avg_aqi)} " <>
+        "(previous = #{inspect(state.previous_avg_aqi)})"
     )
 
-    # Process each reading — check if it crossed a threshold
-    Enum.each(readings, &check_threshold_crossing/1)
+    previous = state.previous_avg_aqi
 
-    {:noreply, state}
+    if avg_aqi != nil and previous != nil do
+      check_threshold_crossings(previous, avg_aqi)
+    end
+
+    {:noreply, %{state | previous_avg_aqi: avg_aqi}}
   end
 
-  # Catch-all for unexpected messages (good practice for GenServers)
+  # Handles the scheduled 7am morning alert.
+  # Checks the current city-wide average AQI. Any active subscriber whose
+  # threshold is at or below the current average receives a morning briefing.
+  def handle_info(:morning_alert, state) do
+    Logger.info("AlertBroadcaster: Running 7am morning AQI check")
+
+    avg_aqi = AqiReadings.average_current_aqi()
+
+    if avg_aqi != nil do
+      send_morning_alerts(avg_aqi)
+    end
+
+    # Schedule the next morning alert
+    schedule_morning_alert()
+
+    # Update previous_avg_aqi so the next poll doesn't re-trigger a crossing
+    {:noreply, %{state | previous_avg_aqi: avg_aqi || state.previous_avg_aqi}}
+  end
+
+  # Catch-all for unexpected messages
   @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
   end
 
   # ============================================================================
-  # Private Functions
+  # Private Functions — Threshold Crossing Detection
   # ============================================================================
 
-  # Checks if a reading's AQI crossed a threshold compared to the previous reading.
-  # Only checks PM2.5 readings (the primary health concern during burn season).
-  @spec check_threshold_crossing(struct()) :: :ok
-  defp check_threshold_crossing(%{parameter: "pm25", aqi_value: aqi_value} = reading)
-       when not is_nil(aqi_value) do
-    # Get the previous reading for this station to compare
-    previous =
-      AqiReadings.get_previous_reading(
-        reading.station_id,
-        reading.parameter,
-        reading.measured_at
-      )
+  # Checks all active subscribers to see if the city average crossed their
+  # personal threshold. Handles both escalations (air worsening) and
+  # clearings (air improving).
+  @spec check_threshold_crossings(integer(), integer()) :: :ok
+  defp check_threshold_crossings(previous_avg, current_avg) do
+    # Get all active subscribers (regardless of threshold) so we can check
+    # each one's personal threshold against the crossing.
+    all_subscribers = Subscriptions.get_all_active_subscribers()
 
-    previous_aqi = if previous, do: previous.aqi_value, else: 0
+    Enum.each(all_subscribers, fn {line_user_id, display_name, threshold} ->
+      cond do
+        # Escalation: average crossed UP past this subscriber's threshold
+        previous_avg < threshold and current_avg >= threshold ->
+          Logger.warning(
+            "AlertBroadcaster: City avg AQI ESCALATION #{previous_avg} → #{current_avg} " <>
+              "(crossed #{threshold} for #{display_name})"
+          )
 
-    check_escalations(reading, previous_aqi)
-    check_clearing(reading, previous_aqi)
+          send_alert(line_user_id, current_avg, :escalation)
 
-    :ok
-  end
+        # Clearing: average crossed DOWN past this subscriber's threshold
+        previous_avg >= threshold and current_avg < threshold ->
+          Logger.info(
+            "AlertBroadcaster: City avg AQI CLEARING #{previous_avg} → #{current_avg} " <>
+              "(cleared #{threshold} for #{display_name})"
+          )
 
-  defp check_threshold_crossing(_reading), do: :ok
+          send_alert(line_user_id, current_avg, :clearing)
 
-  # Check for escalation crossings (AQI going UP past a threshold)
-  @spec check_escalations(struct(), integer()) :: :ok
-  defp check_escalations(reading, previous_aqi) do
-    Enum.each(@alert_thresholds, fn threshold ->
-      if previous_aqi < threshold and reading.aqi_value >= threshold do
-        Logger.warning(
-          "AlertBroadcaster: AQI ESCALATION at #{reading.station_name} — " <>
-            "#{previous_aqi} → #{reading.aqi_value} (crossed #{threshold})"
-        )
-
-        notify_subscribers(reading, :escalation)
+        true ->
+          :ok
       end
     end)
   end
 
-  # Check for clearing (AQI dropping below the clearing threshold)
-  @spec check_clearing(struct(), integer()) :: :ok
-  defp check_clearing(reading, previous_aqi) do
-    if previous_aqi > @clearing_threshold and reading.aqi_value <= @clearing_threshold do
-      Logger.info(
-        "AlertBroadcaster: AQI CLEARING at #{reading.station_name} — " <>
-          "#{previous_aqi} → #{reading.aqi_value} (cleared below #{@clearing_threshold})"
-      )
+  # ============================================================================
+  # Private Functions — Morning Alerts
+  # ============================================================================
 
-      notify_subscribers(reading, :clearing)
+  # Sends morning briefing notifications to all subscribers whose threshold
+  # is at or below the current average AQI.
+  @spec send_morning_alerts(integer()) :: :ok
+  defp send_morning_alerts(avg_aqi) do
+    subscribers = Subscriptions.get_subscribers_for_threshold(avg_aqi)
+
+    Logger.info(
+      "AlertBroadcaster: Morning alert — city avg AQI #{avg_aqi}, " <>
+        "notifying #{length(subscribers)} subscribers"
+    )
+
+    Enum.each(subscribers, fn {line_user_id, _display_name} ->
+      send_alert(line_user_id, avg_aqi, :morning)
+    end)
+  end
+
+  # ============================================================================
+  # Private Functions — Sending Alerts
+  # ============================================================================
+
+  # Sends a single LINE notification for the given alert type.
+  @spec send_alert(String.t(), integer(), :escalation | :clearing | :morning) :: :ok
+  defp send_alert(line_user_id, avg_aqi, alert_type) do
+    message = build_notification_message(avg_aqi, alert_type)
+
+    case LineClient.send_push_message(line_user_id, message) do
+      :ok ->
+        Logger.debug("AlertBroadcaster: Sent #{alert_type} alert to #{line_user_id}")
+
+      {:error, reason} ->
+        Logger.error(
+          "AlertBroadcaster: Failed to notify #{line_user_id} — #{inspect(reason)}"
+        )
     end
 
     :ok
   end
 
-  # Sends LINE notifications to all subscribers who should be notified for this reading.
-  @spec notify_subscribers(struct(), :escalation | :clearing) :: :ok
-  defp notify_subscribers(reading, alert_type) do
-    subscribers = Subscriptions.get_subscribers_for_threshold(reading.aqi_value)
-
-    Logger.info(
-      "AlertBroadcaster: Notifying #{length(subscribers)} subscribers " <>
-        "about #{alert_type} at #{reading.station_name}"
-    )
-
-    Enum.each(subscribers, fn {line_user_id, _display_name} ->
-      # Build and send the LINE notification
-      message = build_notification_message(reading, alert_type)
-
-      case LineClient.send_push_message(line_user_id, message) do
-        :ok ->
-          Logger.debug("AlertBroadcaster: Sent notification to #{line_user_id}")
-
-        {:error, reason} ->
-          Logger.error("AlertBroadcaster: Failed to notify #{line_user_id} — #{inspect(reason)}")
-      end
-    end)
-
-    :ok
-  end
-
   # Builds the notification message payload for LINE.
-  @spec build_notification_message(struct(), :escalation | :clearing) :: map()
-  defp build_notification_message(reading, alert_type) do
-    info = Calculator.category_info(reading.aqi_value)
+  @spec build_notification_message(integer(), :escalation | :clearing | :morning) :: map()
+  defp build_notification_message(avg_aqi, alert_type) do
+    info = Calculator.category_info(avg_aqi)
 
     title =
       case alert_type do
         :escalation -> "⚠️ Air Quality Alert"
         :clearing -> "✅ Air Quality Improved"
+        :morning -> "🌅 Morning AQI Report"
       end
 
     %{
       title: title,
-      aqi_value: reading.aqi_value,
+      aqi_value: avg_aqi,
       category: info.label,
       color: info.color,
       recommendation: info.recommendation,
-      station_name: reading.station_name,
-      measured_at: reading.measured_at,
+      station_name: "Chiang Mai Average",
+      measured_at: DateTime.utc_now(),
       alert_type: alert_type
     }
+  end
+
+  # ============================================================================
+  # Private Functions — Scheduling
+  # ============================================================================
+
+  # Schedules a timer to fire at the next 7:00 AM ICT.
+  # ICT is UTC+7, so 7am ICT = midnight (00:00) UTC.
+  @spec schedule_morning_alert() :: reference()
+  defp schedule_morning_alert do
+    now_utc = DateTime.utc_now()
+
+    # 7am ICT = 0am UTC (7 - 7 = 0)
+    target_utc_hour = @morning_alert_hour - @ict_offset_hours
+
+    # Build today's target time in UTC
+    today_target =
+      now_utc
+      |> DateTime.to_date()
+      |> DateTime.new!(Time.new!(target_utc_hour, 0, 0))
+
+    # If we've already passed today's target, schedule for tomorrow
+    next_target =
+      if DateTime.compare(now_utc, today_target) == :lt do
+        today_target
+      else
+        DateTime.add(today_target, 24 * 3600, :second)
+      end
+
+    delay_ms = DateTime.diff(next_target, now_utc, :millisecond)
+
+    Logger.info(
+      "AlertBroadcaster: Next morning alert scheduled in #{div(delay_ms, 60_000)} minutes " <>
+        "(at #{next_target} UTC / 7:00 AM ICT)"
+    )
+
+    Process.send_after(self(), :morning_alert, delay_ms)
   end
 end

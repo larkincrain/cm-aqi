@@ -149,6 +149,31 @@ defmodule CmAqi.AqiReadings do
     end
   end
 
+  @doc """
+  Returns the average PM2.5 AQI value across all stations' most recent readings.
+
+  Used by the AlertBroadcaster to determine the city-wide air quality level.
+  Only considers PM2.5 readings (the primary health metric during burn season).
+
+  ## Returns
+
+  An integer (rounded average AQI), or `nil` if no PM2.5 readings exist.
+  """
+  @spec average_current_aqi() :: integer() | nil
+  def average_current_aqi do
+    readings = list_latest_readings()
+
+    aqi_values =
+      readings
+      |> Enum.filter(&(&1.parameter == "pm25" and &1.aqi_value != nil))
+      |> Enum.map(& &1.aqi_value)
+
+    case aqi_values do
+      [] -> nil
+      values -> round(Enum.sum(values) / length(values))
+    end
+  end
+
   # ============================================================================
   # Creating / Upserting Readings
   # ============================================================================
