@@ -63,6 +63,7 @@ defmodule CmAqiWeb.DashboardLive do
     # Fetch current data from the database
     readings = AqiReadings.list_latest_readings()
     max_aqi = AqiReadings.max_current_aqi()
+    avg_aqi = AqiReadings.average_current_aqi()
 
     # Group readings by station for the card layout
     stations = group_readings_by_station(readings)
@@ -72,6 +73,9 @@ defmodule CmAqiWeb.DashboardLive do
         page_title: "Dashboard",
         stations: stations,
         max_aqi: max_aqi,
+        avg_aqi: avg_aqi,
+        avg_color: if(avg_aqi, do: Calculator.color_for_aqi(avg_aqi), else: "#808080"),
+        avg_category: if(avg_aqi, do: Calculator.category_for_aqi(avg_aqi), else: nil),
         show_burn_warning: max_aqi != nil and max_aqi > 150,
         last_updated: DateTime.utc_now()
       )
@@ -80,7 +84,9 @@ defmodule CmAqiWeb.DashboardLive do
     # push_event only works on connected sockets (not during static render).
     socket =
       if connected?(socket) do
-        push_chart_data(socket, stations)
+        socket
+        |> push_chart_data(stations)
+        |> push_average_chart_data()
       else
         socket
       end
@@ -102,16 +108,24 @@ defmodule CmAqiWeb.DashboardLive do
     max_aqi = AqiReadings.max_current_aqi()
     stations = group_readings_by_station(readings)
 
+    avg_aqi = AqiReadings.average_current_aqi()
+
     socket =
       assign(socket,
         stations: stations,
         max_aqi: max_aqi,
+        avg_aqi: avg_aqi,
+        avg_color: if(avg_aqi, do: Calculator.color_for_aqi(avg_aqi), else: "#808080"),
+        avg_category: if(avg_aqi, do: Calculator.category_for_aqi(avg_aqi), else: nil),
         show_burn_warning: max_aqi != nil and max_aqi > 150,
         last_updated: DateTime.utc_now()
       )
 
     # Push updated chart data whenever new readings arrive
-    socket = push_chart_data(socket, stations)
+    socket =
+      socket
+      |> push_chart_data(stations)
+      |> push_average_chart_data()
 
     {:noreply, socket}
   end
@@ -171,11 +185,44 @@ defmodule CmAqiWeb.DashboardLive do
         <a href="/subscribe" class="btn btn-sm">Get Alerts</a>
       </div>
 
+      <%!-- City Average Card --%>
+      <div :if={@avg_aqi != nil} class="card bg-base-200 shadow-md overflow-hidden">
+        <div class="h-2" style={"background-color: #{@avg_color}"}></div>
+        <div class="card-body p-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="card-title text-lg">Chiang Mai Average</h2>
+              <div class="flex items-center gap-3 mt-1">
+                <span class="text-5xl font-bold" style={"color: #{@avg_color}"}>
+                  {@avg_aqi}
+                </span>
+                <div>
+                  <span class="text-sm text-base-content/60">AQI</span>
+                  <span
+                    class="badge badge-lg text-white text-xs ml-2"
+                    style={"background-color: #{@avg_color}"}
+                  >
+                    {@avg_category}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="flex-1 min-w-0 h-32">
+              <div
+                id="chart-average"
+                phx-hook="AqiChart"
+                phx-update="ignore"
+                data-station-id="average"
+                class="h-full"
+              >
+                <canvas></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <%!-- Station Cards Grid --%>
-      <%!--
-        `:for` is LiveView's loop syntax. It's equivalent to Enum.each.
-        `{station_id, station}` destructures each map entry into key and value.
-      --%>
       <div :if={@stations == %{}} class="text-center py-12">
         <p class="text-lg text-base-content/60">
           No air quality data available yet.
@@ -296,6 +343,23 @@ defmodule CmAqiWeb.DashboardLive do
 
       push_event(sock, "chart_data:#{station_id}", %{labels: labels, values: values})
     end)
+  end
+
+  # Pushes historical average AQI data for the city-wide chart.
+  @spec push_average_chart_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp push_average_chart_data(socket) do
+    history = AqiReadings.list_average_readings_history()
+
+    labels =
+      Enum.map(history, fn %{measured_at: dt} ->
+        dt
+        |> DateTime.add(7 * 3600, :second)
+        |> Calendar.strftime("%H:%M")
+      end)
+
+    values = Enum.map(history, & &1.aqi_value)
+
+    push_event(socket, "chart_data:average", %{labels: labels, values: values})
   end
 
   # Groups flat reading records into a map keyed by station_id.

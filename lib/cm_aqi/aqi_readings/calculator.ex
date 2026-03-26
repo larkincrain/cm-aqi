@@ -100,16 +100,16 @@ defmodule CmAqi.AqiReadings.Calculator do
   # Each entry contains: {label, color_hex, health_recommendation}
 
   @categories [
-    {0, 50, "Good", "#00e400", "Air quality is satisfactory. Enjoy outdoor activities!"},
-    {51, 100, "Moderate", "#ffff00",
+    {0, 50, "Good", "#198754", "Air quality is satisfactory. Enjoy outdoor activities!"},
+    {51, 100, "Moderate", "#ffc107",
      "Air quality is acceptable. Unusually sensitive people should consider limiting prolonged outdoor exertion."},
-    {101, 150, "Unhealthy for Sensitive Groups", "#ff7e00",
+    {101, 150, "Unhealthy for Sensitive Groups", "#fd7e14",
      "Members of sensitive groups may experience health effects. Consider wearing a mask outdoors."},
-    {151, 200, "Unhealthy", "#ff0000",
+    {151, 200, "Unhealthy", "#dc3545",
      "Everyone may begin to experience health effects. Wear a mask outdoors and limit prolonged exertion."},
-    {201, 300, "Very Unhealthy", "#8f3f97",
+    {201, 300, "Very Unhealthy", "#6f42c1",
      "Health alert: everyone may experience more serious health effects. Avoid outdoor activity."},
-    {301, 500, "Hazardous", "#7e0023",
+    {301, 500, "Hazardous", "#842029",
      "Health emergency: the entire population is likely to be affected. Stay indoors with air purification."}
   ]
 

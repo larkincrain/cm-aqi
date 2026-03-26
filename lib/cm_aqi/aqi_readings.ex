@@ -174,6 +174,33 @@ defmodule CmAqi.AqiReadings do
     end
   end
 
+  @doc """
+  Returns the city-wide average PM2.5 AQI at each timestamp over the last N hours.
+
+  Groups all PM2.5 readings by measured_at and averages the aqi_value across
+  stations at each time point. Used to render the "Chiang Mai Average" chart.
+
+  ## Returns
+
+  A list of `%{measured_at: DateTime.t(), aqi_value: integer()}` maps,
+  ordered chronologically.
+  """
+  @spec list_average_readings_history(integer()) :: [map()]
+  def list_average_readings_history(hours \\ 24) do
+    cutoff = DateTime.utc_now() |> DateTime.add(-hours * 3600, :second)
+
+    from(r in Reading,
+      where: r.parameter == "pm25" and r.measured_at >= ^cutoff and not is_nil(r.aqi_value),
+      group_by: r.measured_at,
+      select: %{
+        measured_at: r.measured_at,
+        aqi_value: fragment("CAST(ROUND(AVG(?)) AS integer)", r.aqi_value)
+      },
+      order_by: [asc: r.measured_at]
+    )
+    |> Repo.all()
+  end
+
   # ============================================================================
   # Creating / Upserting Readings
   # ============================================================================

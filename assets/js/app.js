@@ -35,17 +35,25 @@ import topbar from "../vendor/topbar"
 // In the template, you connect a hook with: phx-hook="HookName"
 // The hook must be registered here in the LiveSocket configuration.
 
+// Returns Bootstrap color for an AQI value, matching the server-side calculator.
+function aqiColor(value) {
+  if (value <= 50) return "#198754"   // Good — Bootstrap success
+  if (value <= 100) return "#ffc107"  // Moderate — Bootstrap warning
+  if (value <= 150) return "#fd7e14"  // Unhealthy for Sensitive — Bootstrap orange
+  if (value <= 200) return "#dc3545"  // Unhealthy — Bootstrap danger
+  if (value <= 300) return "#6f42c1"  // Very Unhealthy — Bootstrap purple
+  return "#842029"                     // Hazardous — Bootstrap dark red
+}
+
 const Hooks = {
-  // AqiChart: Renders a Chart.js line chart showing AQI history for a station.
-  // Connected to elements with phx-hook="AqiChart" in the dashboard template.
+  // AqiChart: Renders a Chart.js line chart showing AQI history.
+  // Each line segment is colored based on the AQI value at that point,
+  // so you can see the air quality change visually over time.
   AqiChart: {
-    // mounted() is called when the element is first added to the DOM.
     mounted() {
       const canvas = this.el.querySelector("canvas")
       if (!canvas || typeof Chart === "undefined") return
 
-      // Create a simple line chart with placeholder data.
-      // In a full implementation, this would fetch historical data from the server.
       this.chart = new Chart(canvas.getContext("2d"), {
         type: "line",
         data: {
@@ -53,11 +61,22 @@ const Hooks = {
           datasets: [{
             label: "AQI",
             data: [],
-            borderColor: "#3b82f6",
-            backgroundColor: "rgba(59, 130, 246, 0.1)",
+            // Use segment styling to color each line segment independently.
+            // ctx.p1 is the endpoint of the segment — we color based on its AQI value.
+            segment: {
+              borderColor: ctx => aqiColor(ctx.p1.parsed.y),
+              backgroundColor: ctx => {
+                const color = aqiColor(ctx.p1.parsed.y)
+                // Add transparency for the fill area
+                return color + "20"
+              }
+            },
+            // Default border color for the first point (segment colors override this)
+            borderColor: "#198754",
             fill: true,
             tension: 0.3,
-            pointRadius: 1,
+            pointRadius: 0,
+            borderWidth: 2,
           }]
         },
         options: {
@@ -65,6 +84,14 @@ const Hooks = {
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
+            tooltip: {
+              callbacks: {
+                labelColor: function(context) {
+                  const color = aqiColor(context.parsed.y)
+                  return { borderColor: color, backgroundColor: color }
+                }
+              }
+            }
           },
           scales: {
             x: {
@@ -80,8 +107,7 @@ const Hooks = {
         }
       })
 
-      // Request historical data from the server via a LiveView event.
-      // The server will push data back via push_event.
+      // Listen for chart data pushed from the server
       this.handleEvent("chart_data:" + this.el.dataset.stationId, (data) => {
         this.chart.data.labels = data.labels
         this.chart.data.datasets[0].data = data.values
@@ -89,8 +115,6 @@ const Hooks = {
       })
     },
 
-    // destroyed() is called when the element is removed from the DOM.
-    // We clean up the Chart.js instance to prevent memory leaks.
     destroyed() {
       if (this.chart) {
         this.chart.destroy()
