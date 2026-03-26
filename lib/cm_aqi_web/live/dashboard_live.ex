@@ -67,14 +67,25 @@ defmodule CmAqiWeb.DashboardLive do
     # Group readings by station for the card layout
     stations = group_readings_by_station(readings)
 
-    {:ok,
-     assign(socket,
-       page_title: "Dashboard",
-       stations: stations,
-       max_aqi: max_aqi,
-       show_burn_warning: max_aqi != nil and max_aqi > 150,
-       last_updated: DateTime.utc_now()
-     )}
+    socket =
+      assign(socket,
+        page_title: "Dashboard",
+        stations: stations,
+        max_aqi: max_aqi,
+        show_burn_warning: max_aqi != nil and max_aqi > 150,
+        last_updated: DateTime.utc_now()
+      )
+
+    # Push historical chart data for each station after the client connects.
+    # push_event only works on connected sockets (not during static render).
+    socket =
+      if connected?(socket) do
+        push_chart_data(socket, stations)
+      else
+        socket
+      end
+
+    {:ok, socket}
   end
 
   @doc """
@@ -91,13 +102,18 @@ defmodule CmAqiWeb.DashboardLive do
     max_aqi = AqiReadings.max_current_aqi()
     stations = group_readings_by_station(readings)
 
-    {:noreply,
-     assign(socket,
-       stations: stations,
-       max_aqi: max_aqi,
-       show_burn_warning: max_aqi != nil and max_aqi > 150,
-       last_updated: DateTime.utc_now()
-     )}
+    socket =
+      assign(socket,
+        stations: stations,
+        max_aqi: max_aqi,
+        show_burn_warning: max_aqi != nil and max_aqi > 150,
+        last_updated: DateTime.utc_now()
+      )
+
+    # Push updated chart data whenever new readings arrive
+    socket = push_chart_data(socket, stations)
+
+    {:noreply, socket}
   end
 
   # ============================================================================
@@ -257,6 +273,30 @@ defmodule CmAqiWeb.DashboardLive do
   # ============================================================================
   # Private Helpers
   # ============================================================================
+
+  # Pushes historical chart data to the browser for each station.
+  # The JS hook (AqiChart) listens for "chart_data:<station_id>" events
+  # and updates the Chart.js graph with the received labels and values.
+  @spec push_chart_data(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  defp push_chart_data(socket, stations) do
+    Enum.reduce(stations, socket, fn {station_id, _station}, sock ->
+      readings = AqiReadings.list_readings_for_station(station_id)
+
+      # Filter to PM2.5 readings for the chart (primary health metric)
+      pm25_readings = Enum.filter(readings, &(&1.parameter == "pm25"))
+
+      labels =
+        Enum.map(pm25_readings, fn r ->
+          r.measured_at
+          |> DateTime.add(7 * 3600, :second)
+          |> Calendar.strftime("%H:%M")
+        end)
+
+      values = Enum.map(pm25_readings, & &1.aqi_value)
+
+      push_event(sock, "chart_data:#{station_id}", %{labels: labels, values: values})
+    end)
+  end
 
   # Groups flat reading records into a map keyed by station_id.
   # Each station entry has: name, pm25, pm10, aqi_value, category, color, measured_at

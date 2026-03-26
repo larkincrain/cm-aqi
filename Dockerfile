@@ -45,6 +45,7 @@ RUN mix deps.compile
 COPY priv priv
 COPY lib lib
 COPY assets assets
+COPY rel rel
 
 # Compile the application FIRST — Phoenix 1.8 colocated hooks
 # require the Elixir code to be compiled before assets can be bundled.

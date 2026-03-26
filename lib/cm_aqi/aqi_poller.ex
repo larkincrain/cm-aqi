@@ -214,10 +214,21 @@ defmodule CmAqi.AqiPoller do
       {:error,
        "AQICN_API_TOKEN not configured. Get one at https://aqicn.org/data-platform/token/"}
     else
-      with {:ok, stations} <- search_stations(client, token),
-           {:ok, readings} <- fetch_station_details(client, token, stations) do
-        stored = AqiReadings.upsert_readings(readings)
-        {:ok, stored}
+      # We wrap the entire fetch+store in a try/rescue because database connection
+      # errors (e.g., Postgres is down) raise exceptions instead of returning errors.
+      # Without this, a DB outage would crash the GenServer in a tight loop.
+      try do
+        with {:ok, stations} <- search_stations(client, token),
+             {:ok, readings} <- fetch_station_details(client, token, stations) do
+          stored = AqiReadings.upsert_readings(readings)
+          {:ok, stored}
+        end
+      rescue
+        e in DBConnection.ConnectionError ->
+          {:error, "Database connection failed: #{Exception.message(e)}"}
+
+        e ->
+          {:error, "Unexpected error: #{Exception.message(e)}"}
       end
     end
   end
