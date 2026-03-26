@@ -236,9 +236,8 @@ defmodule CmAqi.AqiPoller do
       # errors (e.g., Postgres is down) raise exceptions instead of returning errors.
       # Without this, a DB outage would crash the GenServer in a tight loop.
       try do
-        with {:ok, all_stations, active_stations} <- search_stations(client, token),
-             {:ok, readings} <- fetch_station_details(client, token, active_stations) do
-          stored = AqiReadings.upsert_readings(readings)
+        with {:ok, all_stations, readings_attrs} <- search_stations(client, token) do
+          stored = AqiReadings.upsert_readings(readings_attrs)
           {:ok, stored, all_stations}
         end
       rescue
@@ -251,173 +250,116 @@ defmodule CmAqi.AqiPoller do
     end
   end
 
-  # Step 1: Search for all Chiang Mai monitoring stations.
+  # Step 1: Find all stations within ~50km of Chiang Mai using the map bounds API.
   #
-  # The AQICN search endpoint returns a list of stations matching a keyword.
-  # Returns {all_stations, active_stations} where all_stations is the full
-  # list (for the map) and active_stations are those with current data (for fetching).
+  # The /v2/map/bounds endpoint returns all stations within a lat/lng bounding box.
+  # This gives us far more stations than the keyword search (55+ vs 21).
+  # The bounding box is approximately 50km around Chiang Mai city center (18.79, 98.98).
+  #
+  # Returns {all_stations_for_map, active_raw_stations_for_feed_fetch}.
   @spec search_stations(module(), String.t()) ::
           {:ok, list(map()), list(map())} | {:error, any()}
   defp search_stations(client, token) do
-    url = "#{@waqi_base_url}/search/?keyword=chiang+mai&token=#{token}"
+    # ~50km bounding box around Chiang Mai (18.79, 98.98)
+    # 0.3 degrees latitude ≈ 33km, using 0.3 gives ~60km total span
+    url =
+      "#{@waqi_base_url}/v2/map/bounds?latlng=18.49,98.68,19.09,99.28&networks=all&token=#{token}"
 
     case client.get(url, [{"Accept", "application/json"}]) do
       {:ok, %{status: 200, body: %{"status" => "ok", "data" => data}}} when is_list(data) ->
-        # Parse all stations into a clean format for the map
-        all_stations = Enum.map(data, &parse_search_station/1)
+        # Parse all stations for the map display
+        all_stations = Enum.map(data, &parse_bounds_station/1)
 
-        # Only fetch detailed data for stations that have current readings
-        active_stations =
-          Enum.filter(data, fn station ->
-            aqi = get_in(station, ["aqi"])
-            aqi != "-" and aqi != nil
+        # Build reading attributes directly from bounds data for active stations.
+        # The bounds API provides the overall AQI, which during burn season is
+        # always driven by PM2.5. This avoids 55+ individual /feed/ API calls.
+        readings_attrs =
+          data
+          |> Enum.filter(fn station ->
+            aqi = Map.get(station, "aqi")
+            is_number(aqi) or (is_binary(aqi) and aqi != "-")
           end)
+          |> Enum.map(&bounds_station_to_reading/1)
 
         Logger.info(
-          "AqiPoller: Found #{length(all_stations)} total stations, " <>
-            "#{length(active_stations)} active"
+          "AqiPoller: Found #{length(all_stations)} stations in 50km radius, " <>
+            "#{length(readings_attrs)} with active readings"
         )
 
-        {:ok, all_stations, active_stations}
+        {:ok, all_stations, readings_attrs}
 
-      {:ok, %{status: 200, body: %{"status" => "error", "data" => msg}}} ->
-        {:error, "AQICN API error: #{msg}"}
-
-      {:ok, %{status: status}} ->
-        {:error, "AQICN returned status #{status}"}
+      {:ok, %{status: status, body: body}} ->
+        Logger.error("AqiPoller: Bounds API returned status #{status}: #{inspect(body)}")
+        {:error, "AQICN bounds API returned status #{status}"}
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  # Parses a station from the search response into a clean map.
-  @spec parse_search_station(map()) :: map()
-  defp parse_search_station(station) do
-    uid = get_in(station, ["uid"])
-    aqi = get_in(station, ["aqi"])
+  # Parses a station from the map bounds response into a clean map for the dashboard.
+  @spec parse_bounds_station(map()) :: map()
+  defp parse_bounds_station(station) do
+    uid = Map.get(station, "uid")
+    aqi_raw = Map.get(station, "aqi")
     name = get_in(station, ["station", "name"]) || "Station #{uid}"
-    geo = get_in(station, ["station", "geo"]) || []
+    lat = Map.get(station, "lat")
+    lon = Map.get(station, "lon")
+
+    active =
+      cond do
+        is_number(aqi_raw) and aqi_raw > 0 -> true
+        is_binary(aqi_raw) and aqi_raw != "-" -> true
+        true -> false
+      end
 
     %{
       uid: to_string(uid),
       name: name,
-      lat: Enum.at(geo, 0),
-      lng: Enum.at(geo, 1),
-      active: aqi != "-" and aqi != nil
+      lat: lat,
+      lng: lon,
+      active: active
     }
   end
 
-  # Step 2: Fetch detailed data for each station.
-  #
-  # The /feed/@uid/ endpoint returns the full station data including individual
-  # pollutant readings (PM2.5, PM10, etc.) in the `iaqi` field, plus the
-  # overall AQI, timestamps, and coordinates.
-  @spec fetch_station_details(module(), String.t(), list(map())) ::
-          {:ok, list(map())} | {:error, any()}
-  defp fetch_station_details(client, token, stations) do
-    readings =
-      stations
-      |> Enum.flat_map(fn station ->
-        uid = get_in(station, ["uid"])
-        fetch_single_station(client, token, uid)
-      end)
+  # Converts a bounds API station into a reading attributes map for upserting.
+  # The bounds API provides the overall AQI value directly, so we don't need
+  # to call /feed/ for each station individually.
+  @spec bounds_station_to_reading(map()) :: map()
+  defp bounds_station_to_reading(station) do
+    uid = Map.get(station, "uid")
+    aqi_raw = Map.get(station, "aqi")
+    name = get_in(station, ["station", "name"]) || "Station #{uid}"
+    time_str = get_in(station, ["station", "time"])
+    lat = Map.get(station, "lat")
+    lon = Map.get(station, "lon")
 
-    {:ok, readings}
-  end
+    aqi_int =
+      cond do
+        is_integer(aqi_raw) -> aqi_raw
+        is_float(aqi_raw) -> round(aqi_raw)
+        is_binary(aqi_raw) -> String.to_integer(aqi_raw)
+        true -> nil
+      end
 
-  # Fetches detailed data for a single station by its AQICN uid.
-  # Returns a list of reading maps (one for PM2.5, one for PM10 if available).
-  @spec fetch_single_station(module(), String.t(), integer() | String.t()) :: list(map())
-  defp fetch_single_station(client, token, uid) do
-    url = "#{@waqi_base_url}/feed/@#{uid}/?token=#{token}"
+    measured_at =
+      case time_str && DateTime.from_iso8601(time_str) do
+        {:ok, dt, _offset} -> DateTime.truncate(dt, :second)
+        _ -> DateTime.utc_now() |> DateTime.truncate(:second)
+      end
 
-    case client.get(url, [{"Accept", "application/json"}]) do
-      {:ok, %{status: 200, body: %{"status" => "ok", "data" => data}}} when is_map(data) ->
-        parse_station_data(data)
-
-      {:ok, response} ->
-        Logger.warning("AqiPoller: Unexpected response for station #{uid}: #{inspect(response)}")
-        []
-
-      {:error, reason} ->
-        Logger.warning("AqiPoller: Failed to fetch station #{uid}: #{inspect(reason)}")
-        []
-    end
-  end
-
-  # Parses the AQICN station feed response into reading attribute maps.
-  #
-  # AQICN response structure:
-  # %{
-  #   "aqi" => 127,              ← overall AQI (based on dominant pollutant)
-  #   "idx" => 5775,             ← station unique ID
-  #   "dominentpol" => "pm25",   ← which pollutant drives the overall AQI
-  #   "city" => %{
-  #     "name" => "Chiang Mai",
-  #     "geo" => [18.787, 98.993]  ← [latitude, longitude]
-  #   },
-  #   "iaqi" => %{               ← individual pollutant AQI values
-  #     "pm25" => %{"v" => 127},
-  #     "pm10" => %{"v" => 82},
-  #     ...
-  #   },
-  #   "time" => %{
-  #     "iso" => "2024-03-15T09:00:00+07:00"
-  #   }
-  # }
-  @spec parse_station_data(map()) :: list(map())
-  defp parse_station_data(data) do
-    station_id = to_string(Map.get(data, "idx", ""))
-    station_name = get_in(data, ["city", "name"]) || "Unknown Station"
-
-    # Extract coordinates from the [lat, lng] array
-    geo = get_in(data, ["city", "geo"]) || []
-    latitude = Enum.at(geo, 0)
-    longitude = Enum.at(geo, 1)
-
-    # Parse the measurement timestamp
-    measured_at = parse_timestamp(data)
-
-    # Extract individual pollutant readings from the "iaqi" map.
-    # AQICN provides AQI values (not raw µg/m³) for each pollutant.
-    iaqi = Map.get(data, "iaqi", %{})
-
-    # Build readings for PM2.5 and PM10 (the pollutants we track)
-    ["pm25", "pm10"]
-    |> Enum.filter(fn param -> Map.has_key?(iaqi, param) end)
-    |> Enum.map(fn param ->
-      # The "v" field contains the AQI value for this specific pollutant
-      aqi_value = get_in(iaqi, [param, "v"])
-      aqi_int = if is_number(aqi_value), do: round(aqi_value), else: nil
-
-      %{
-        "station_id" => station_id,
-        "station_name" => station_name,
-        "parameter" => param,
-        # AQICN gives us AQI values, not raw concentrations.
-        # We store the AQI value as both `value` and `aqi_value`.
-        "value" => if(is_number(aqi_value), do: aqi_value / 1.0, else: 0.0),
-        "aqi_value" => aqi_int,
-        "category" => if(aqi_int, do: CmAqi.AqiReadings.Calculator.category_for_aqi(aqi_int)),
-        "unit" => "AQI",
-        "latitude" => latitude,
-        "longitude" => longitude,
-        "measured_at" => measured_at
-      }
-    end)
-  end
-
-  # Parses the timestamp from the AQICN response.
-  # The API provides an ISO 8601 timestamp with timezone offset.
-  @spec parse_timestamp(map()) :: DateTime.t()
-  defp parse_timestamp(data) do
-    iso_string = get_in(data, ["time", "iso"])
-
-    case iso_string && DateTime.from_iso8601(iso_string) do
-      {:ok, dt, _offset} -> DateTime.truncate(dt, :second)
-      _ -> DateTime.utc_now() |> DateTime.truncate(:second)
-    end
+    %{
+      "station_id" => to_string(uid),
+      "station_name" => name,
+      "parameter" => "pm25",
+      "value" => if(aqi_int, do: aqi_int / 1.0, else: 0.0),
+      "aqi_value" => aqi_int,
+      "category" => if(aqi_int, do: CmAqi.AqiReadings.Calculator.category_for_aqi(aqi_int)),
+      "unit" => "AQI",
+      "latitude" => lat,
+      "longitude" => lon,
+      "measured_at" => measured_at
+    }
   end
 
   # Returns the AQICN API token from application config.

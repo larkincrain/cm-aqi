@@ -254,20 +254,18 @@ defmodule CmAqiWeb.DashboardLive do
           <div class="card-body p-4">
             <h2 class="card-title text-sm leading-tight line-clamp-2">{station.name}</h2>
 
-            <div class="flex items-center justify-between">
-              <div>
-                <span class="text-3xl font-bold" style={"color: #{station.color}"}>
-                  {station.aqi_value || "—"}
-                </span>
-                <span class="text-xs text-base-content/60 ml-1">AQI</span>
-              </div>
-              <span
-                class="badge text-white text-xs"
-                style={"background-color: #{station.color}"}
-              >
-                {station.category || "No Data"}
+            <div class="flex items-end gap-2">
+              <span class="text-3xl font-bold" style={"color: #{station.color}"}>
+                {station.aqi_value || "—"}
               </span>
+              <span class="text-xs text-base-content/60 mb-1">AQI</span>
             </div>
+            <span
+              class="badge text-white text-xs whitespace-nowrap self-start"
+              style={"background-color: #{station.color}"}
+            >
+              {station.category || "No Data"}
+            </span>
 
             <div class="grid grid-cols-2 gap-2 mt-1 text-xs">
               <div class="bg-base-300 rounded p-1.5">
