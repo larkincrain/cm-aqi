@@ -151,10 +151,10 @@ defmodule CmAqi.AqiReadings do
   end
 
   @doc """
-  Returns the average PM2.5 AQI value across all stations' most recent readings.
+  Returns the average PM2.5 AQI value across stations within 50km of Chiang Mai.
 
-  Used by the AlertBroadcaster to determine the city-wide air quality level.
-  Only considers PM2.5 readings (the primary health metric during burn season).
+  Only considers PM2.5 readings from stations in the inner radius.
+  Stations outside 50km are shown on the map but excluded from the average.
 
   ## Returns
 
@@ -166,7 +166,9 @@ defmodule CmAqi.AqiReadings do
 
     aqi_values =
       readings
-      |> Enum.filter(&(&1.parameter == "pm25" and &1.aqi_value != nil))
+      |> Enum.filter(fn r ->
+        r.parameter == "pm25" and r.aqi_value != nil and within_50km?(r.latitude, r.longitude)
+      end)
       |> Enum.map(& &1.aqi_value)
 
     case aqi_values do
@@ -208,13 +210,14 @@ defmodule CmAqi.AqiReadings do
     now = DateTime.utc_now()
     hour = DateTime.truncate(now, :second) |> Map.merge(%{minute: 0, second: 0, microsecond: {0, 0}})
 
-    # Get the latest PM2.5 reading for each station (not all readings in the hour,
-    # just the most recent per station to avoid double-counting)
+    # Get the latest PM2.5 reading for each station within 50km
     readings = list_latest_readings()
 
     aqi_values =
       readings
-      |> Enum.filter(&(&1.parameter == "pm25" and &1.aqi_value != nil))
+      |> Enum.filter(fn r ->
+        r.parameter == "pm25" and r.aqi_value != nil and within_50km?(r.latitude, r.longitude)
+      end)
       |> Enum.map(& &1.aqi_value)
 
     case aqi_values do
@@ -366,4 +369,35 @@ defmodule CmAqi.AqiReadings do
 
   # If attrs don't have the expected keys, return unchanged
   defp maybe_calculate_aqi(attrs), do: attrs
+
+  # Chiang Mai city center
+  @cm_lat 18.79
+  @cm_lng 98.98
+
+  # Returns true if the given coordinates are within 50km of Chiang Mai center.
+  @spec within_50km?(float() | nil, float() | nil) :: boolean()
+  defp within_50km?(nil, _), do: false
+  defp within_50km?(_, nil), do: false
+
+  defp within_50km?(lat, lng) do
+    haversine_km(@cm_lat, @cm_lng, lat, lng) <= 50
+  end
+
+  # Haversine formula — returns distance in km between two lat/lng points.
+  @spec haversine_km(float(), float(), float(), float()) :: float()
+  defp haversine_km(lat1, lng1, lat2, lng2) do
+    r = 6371.0
+    dlat = (lat2 - lat1) * :math.pi() / 180.0
+    dlng = (lng2 - lng1) * :math.pi() / 180.0
+    lat1_rad = lat1 * :math.pi() / 180.0
+    lat2_rad = lat2 * :math.pi() / 180.0
+
+    a =
+      :math.sin(dlat / 2) * :math.sin(dlat / 2) +
+        :math.cos(lat1_rad) * :math.cos(lat2_rad) *
+          :math.sin(dlng / 2) * :math.sin(dlng / 2)
+
+    c = 2 * :math.atan2(:math.sqrt(a), :math.sqrt(1 - a))
+    r * c
+  end
 end

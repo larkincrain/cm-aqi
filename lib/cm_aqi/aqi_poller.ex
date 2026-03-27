@@ -64,6 +64,13 @@ defmodule CmAqi.AqiPoller do
   # The AQICN / WAQI API base URL
   @waqi_base_url "https://api.waqi.info"
 
+  # Chiang Mai city center coordinates
+  @cm_lat 18.79
+  @cm_lng 98.98
+
+  # Radius thresholds in kilometers
+  @inner_radius_km 50
+
   # ============================================================================
   # Client API (Public Functions)
   # ============================================================================
@@ -253,20 +260,19 @@ defmodule CmAqi.AqiPoller do
     end
   end
 
-  # Step 1: Find all stations within ~50km of Chiang Mai using the map bounds API.
+  # Step 1: Find all stations within ~400km of Chiang Mai using the map bounds API.
   #
   # The /v2/map/bounds endpoint returns all stations within a lat/lng bounding box.
-  # This gives us far more stations than the keyword search (55+ vs 21).
-  # The bounding box is approximately 50km around Chiang Mai city center (18.79, 98.98).
-  #
-  # Returns {all_stations_for_map, active_raw_stations_for_feed_fetch}.
+  # We fetch a large 400km radius to show regional context on the map.
+  # Each station is flagged with `within_50km` to indicate whether it counts
+  # toward the Chiang Mai city average.
   @spec search_stations(module(), String.t()) ::
           {:ok, list(map()), list(map())} | {:error, any()}
   defp search_stations(client, token) do
-    # ~50km bounding box around Chiang Mai (18.79, 98.98)
-    # 0.3 degrees latitude ≈ 33km, using 0.3 gives ~60km total span
+    # ~400km bounding box around Chiang Mai (18.79, 98.98)
+    # 400km ≈ 3.6 degrees latitude
     url =
-      "#{@waqi_base_url}/v2/map/bounds?latlng=18.49,98.68,19.09,99.28&networks=all&token=#{token}"
+      "#{@waqi_base_url}/v2/map/bounds?latlng=15.19,95.38,22.39,102.58&networks=all&token=#{token}"
 
     case client.get(url, [{"Accept", "application/json"}]) do
       {:ok, %{status: 200, body: %{"status" => "ok", "data" => data}}} when is_list(data) ->
@@ -284,9 +290,11 @@ defmodule CmAqi.AqiPoller do
           end)
           |> Enum.map(&bounds_station_to_reading/1)
 
+        inner_count = Enum.count(all_stations, & &1.within_50km)
+
         Logger.info(
-          "AqiPoller: Found #{length(all_stations)} stations in 50km radius, " <>
-            "#{length(readings_attrs)} with active readings"
+          "AqiPoller: Found #{length(all_stations)} stations in 400km radius " <>
+            "(#{inner_count} within 50km), #{length(readings_attrs)} with active readings"
         )
 
         {:ok, all_stations, readings_attrs}
@@ -301,6 +309,7 @@ defmodule CmAqi.AqiPoller do
   end
 
   # Parses a station from the map bounds response into a clean map for the dashboard.
+  # Computes `within_50km` flag using Haversine distance from CM city center.
   @spec parse_bounds_station(map()) :: map()
   defp parse_bounds_station(station) do
     uid = Map.get(station, "uid")
@@ -316,13 +325,39 @@ defmodule CmAqi.AqiPoller do
         true -> false
       end
 
+    distance_km =
+      if is_number(lat) and is_number(lon) do
+        haversine_km(@cm_lat, @cm_lng, lat, lon)
+      else
+        999
+      end
+
     %{
       uid: to_string(uid),
       name: name,
       lat: lat,
       lng: lon,
-      active: active
+      active: active,
+      within_50km: distance_km <= @inner_radius_km
     }
+  end
+
+  # Haversine formula — returns distance in km between two lat/lng points.
+  @spec haversine_km(float(), float(), float(), float()) :: float()
+  defp haversine_km(lat1, lng1, lat2, lng2) do
+    r = 6371.0
+    dlat = (lat2 - lat1) * :math.pi() / 180.0
+    dlng = (lng2 - lng1) * :math.pi() / 180.0
+    lat1_rad = lat1 * :math.pi() / 180.0
+    lat2_rad = lat2 * :math.pi() / 180.0
+
+    a =
+      :math.sin(dlat / 2) * :math.sin(dlat / 2) +
+        :math.cos(lat1_rad) * :math.cos(lat2_rad) *
+          :math.sin(dlng / 2) * :math.sin(dlng / 2)
+
+    c = 2 * :math.atan2(:math.sqrt(a), :math.sqrt(1 - a))
+    r * c
   end
 
   # Converts a bounds API station into a reading attributes map for upserting.

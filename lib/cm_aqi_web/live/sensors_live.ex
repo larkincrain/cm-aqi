@@ -144,10 +144,17 @@ defmodule CmAqiWeb.SensorsLive do
   # ============================================================================
 
   # Builds a flat list of station maps from the latest readings.
-  # Groups by station_id and uses PM2.5 as the primary reading.
+  # Only includes stations within 50km of Chiang Mai.
   defp build_station_list(readings) do
+    # Build lookup of within_50km flag from the poller
+    inner_lookup =
+      CmAqi.AqiPoller.list_all_stations()
+      |> Enum.into(%{}, fn s -> {s.uid, s.within_50km} end)
+
     readings
-    |> Enum.filter(&(&1.parameter == "pm25"))
+    |> Enum.filter(fn r ->
+      r.parameter == "pm25" and Map.get(inner_lookup, r.station_id, false)
+    end)
     |> Enum.map(fn r ->
       aqi = r.aqi_value
       color = if aqi, do: Calculator.color_for_aqi(aqi), else: "#808080"

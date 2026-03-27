@@ -164,26 +164,30 @@ const Hooks = {
         data.markers.forEach(station => {
           const color = station.color || "#808080"
           const isActive = station.active
+          const isInner = station.within_50km
 
-          // Add to heatmap if active with valid AQI
+          // All active stations contribute to the heatmap
           if (isActive && station.aqi != null) {
-            // Normalize AQI to 0-1 range for heat intensity (cap at 500)
             const intensity = Math.min(station.aqi, 500) / 500
             heatPoints.push([station.lat, station.lng, intensity])
           }
 
-          // Active stations: large, opaque. Inactive: smaller, semi-transparent.
+          // Inner active: large markers. Outer active: medium. Inactive: small.
+          let radius, weight, opacity, fillOpacity
+          if (isActive && isInner) {
+            radius = 14; weight = 2; opacity = 1; fillOpacity = 0.9
+          } else if (isActive) {
+            radius = 8; weight = 1; opacity = 0.8; fillOpacity = 0.7
+          } else {
+            radius = 5; weight = 1; opacity = 0.4; fillOpacity = 0.3
+          }
+
           const marker = L.circleMarker([station.lat, station.lng], {
-            radius: isActive ? 14 : 8,
-            fillColor: color,
-            color: "#fff",
-            weight: isActive ? 2 : 1,
-            opacity: isActive ? 1 : 0.6,
-            fillOpacity: isActive ? 0.9 : 0.4,
+            radius, fillColor: color, color: "#fff", weight, opacity, fillOpacity,
           }).addTo(this.map)
 
-          // Show AQI value on active markers, nothing on inactive
-          if (isActive && station.aqi != null) {
+          // Show AQI value label only on inner active markers
+          if (isActive && isInner && station.aqi != null) {
             marker.bindTooltip(String(station.aqi), {
               permanent: true,
               direction: "center",
@@ -247,6 +251,45 @@ const Hooks = {
         // Recalculate size after markers are added
         this.map.invalidateSize()
       })
+
+      // Fire detection markers
+      this.fireMarkers = []
+      this.handleEvent("fire_data", (data) => {
+        // Clear old fire markers
+        this.fireMarkers.forEach(m => m.remove())
+        this.fireMarkers = []
+
+        // Create a pane for fires above the heatmap but below station markers
+        if (!this.map.getPane("firePane")) {
+          this.map.createPane("firePane")
+          this.map.getPane("firePane").style.zIndex = 500
+        }
+
+        data.fires.forEach(fire => {
+          const marker = L.circleMarker([fire.lat, fire.lng], {
+            radius: 4,
+            fillColor: "#ff6600",
+            color: "#cc3300",
+            weight: 1,
+            fillOpacity: 0.8,
+            pane: "firePane",
+          }).addTo(this.map)
+
+          // Format time as HH:MM
+          const time = fire.acq_time
+          const timeStr = time.substring(0, 2) + ":" + time.substring(2, 4)
+
+          marker.bindPopup(
+            `<strong>🔥 Fire Detection</strong><br/>` +
+            `Brightness: ${fire.brightness ? fire.brightness.toFixed(1) : "—"}K<br/>` +
+            `FRP: ${fire.frp ? fire.frp.toFixed(1) : "—"} MW<br/>` +
+            `Confidence: ${fire.confidence || "—"}<br/>` +
+            `Detected: ${fire.acq_date} ${timeStr} UTC`
+          )
+
+          this.fireMarkers.push(marker)
+        })
+      })
     },
 
     // Calculates the heatmap radius in pixels so each station's heat blob
@@ -286,6 +329,7 @@ const Hooks = {
 
     destroyed() {
       if (this.map) {
+        this.fireMarkers.forEach(m => m.remove())
         this.map.remove()
       }
     }

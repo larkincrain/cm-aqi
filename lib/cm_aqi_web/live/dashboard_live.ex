@@ -37,6 +37,7 @@ defmodule CmAqiWeb.DashboardLive do
   alias CmAqi.AqiReadings
   alias CmAqi.AqiReadings.Calculator
   alias CmAqi.AqiPoller
+  alias CmAqi.FirePoller
 
   # ============================================================================
   # LiveView Lifecycle Callbacks
@@ -59,6 +60,7 @@ defmodule CmAqiWeb.DashboardLive do
     # (not during the initial static HTML render)
     if connected?(socket) do
       Phoenix.PubSub.subscribe(CmAqi.PubSub, "aqi:updates")
+      Phoenix.PubSub.subscribe(CmAqi.PubSub, "fire:updates")
     end
 
     # Fetch current data from the database
@@ -98,6 +100,7 @@ defmodule CmAqiWeb.DashboardLive do
         avg_color: if(avg_aqi, do: Calculator.color_for_aqi(avg_aqi), else: "#808080"),
         avg_category: if(avg_aqi, do: Calculator.category_for_aqi(avg_aqi), else: nil),
         show_burn_warning: max_aqi != nil and max_aqi > 150,
+        fire_count: length(FirePoller.list_fires()),
         last_updated: DateTime.utc_now()
       )
 
@@ -109,6 +112,7 @@ defmodule CmAqiWeb.DashboardLive do
         |> push_chart_data(stations)
         |> push_average_chart_data()
         |> push_map_data(stations)
+        |> push_fire_data()
       else
         socket
       end
@@ -153,6 +157,15 @@ defmodule CmAqiWeb.DashboardLive do
     {:noreply, socket}
   end
 
+  def handle_info({:fires_updated, fires}, socket) do
+    socket =
+      socket
+      |> assign(fire_count: length(fires))
+      |> push_fire_data()
+
+    {:noreply, socket}
+  end
+
   # ============================================================================
   # Template (render/1)
   # ============================================================================
@@ -171,6 +184,12 @@ defmodule CmAqiWeb.DashboardLive do
         </p>
         <p class="text-sm text-base-content/40 mt-1">
           Last updated: {format_datetime(@last_updated)}
+        </p>
+        <p :if={@fire_count > 0} class="text-sm mt-2">
+          <span class="badge badge-warning gap-1">
+            <span>🔥</span>
+            {@fire_count} active fires detected in northern Thailand
+          </span>
         </p>
       </div>
 
@@ -343,6 +362,26 @@ defmodule CmAqiWeb.DashboardLive do
     end)
   end
 
+  # Pushes fire detection data to the Leaflet map hook.
+  @spec push_fire_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp push_fire_data(socket) do
+    fires =
+      FirePoller.list_fires()
+      |> Enum.map(fn f ->
+        %{
+          lat: f.lat,
+          lng: f.lng,
+          brightness: f.brightness,
+          confidence: f.confidence,
+          frp: f.frp,
+          acq_date: f.acq_date,
+          acq_time: f.acq_time
+        }
+      end)
+
+    push_event(socket, "fire_data", %{fires: fires})
+  end
+
   # Pushes historical average AQI data for the city-wide chart.
   # Reads from the pre-computed hourly_averages table (fast indexed read).
   @spec push_average_chart_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
@@ -390,7 +429,8 @@ defmodule CmAqiWeb.DashboardLive do
               aqi: nil,
               color: "#808080",
               category: "Offline",
-              active: false
+              active: false,
+              within_50km: s.within_50km
             }
 
           active ->
@@ -403,7 +443,8 @@ defmodule CmAqiWeb.DashboardLive do
               aqi: active.aqi_value,
               color: active.color,
               category: active.category,
-              active: true
+              active: true,
+              within_50km: s.within_50km
             }
         end
       end)
@@ -412,17 +453,24 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   # Groups flat reading records into a map keyed by station_id.
-  # Each station entry has: name, pm25, pm10, aqi_value, category, color, measured_at
+  # Annotates each station with `within_50km` from the poller's station list.
+  # Only includes stations within 50km for the dashboard card scroll.
   @spec group_readings_by_station(list()) :: map()
   defp group_readings_by_station(readings) do
+    # Build lookup of within_50km flag from the poller's full station list
+    inner_lookup =
+      AqiPoller.list_all_stations()
+      |> Enum.into(%{}, fn s -> {s.uid, s.within_50km} end)
+
     readings
     |> Enum.group_by(& &1.station_id)
+    |> Enum.filter(fn {station_id, _} ->
+      Map.get(inner_lookup, station_id, false)
+    end)
     |> Enum.map(fn {station_id, station_readings} ->
-      # Find PM2.5 and PM10 readings for this station
       pm25 = Enum.find(station_readings, &(&1.parameter == "pm25"))
       pm10 = Enum.find(station_readings, &(&1.parameter == "pm10"))
 
-      # Use PM2.5 as the primary AQI (it's the more health-relevant pollutant)
       primary = pm25 || pm10
       aqi_value = if primary, do: primary.aqi_value, else: nil
       category = if primary, do: primary.category, else: nil

@@ -25,6 +25,7 @@ config :cm_aqi, CmAqiWeb.Endpoint, http: [port: String.to_integer(System.get_env
 # AQICN API token — required for all environments.
 # Register for free at https://aqicn.org/data-platform/token/
 config :cm_aqi, :aqicn_api_token, System.get_env("AQICN_API_TOKEN")
+config :cm_aqi, :firms_map_key, System.get_env("FIRMS_MAP_KEY")
 
 if config_env() == :prod do
   database_url =

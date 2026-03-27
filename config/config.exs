@@ -84,6 +84,12 @@ config :cm_aqi, :line,
 # The token is passed as a query parameter: ?token=YOUR_TOKEN
 config :cm_aqi, :aqicn_api_token, System.get_env("AQICN_API_TOKEN")
 
+# NASA FIRMS API Configuration
+# ============================================================================
+# FIRMS provides near-real-time fire detection data from VIIRS satellites.
+# Register for a free MAP_KEY at https://firms.modaps.eosdis.nasa.gov/
+config :cm_aqi, :firms_map_key, System.get_env("FIRMS_MAP_KEY")
+
 # ============================================================================
 # HTTP Client Configuration
 # ============================================================================

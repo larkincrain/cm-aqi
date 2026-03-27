@@ -52,6 +52,9 @@ defmodule CmAqi.Application do
       # It's started here so it begins polling as soon as the app boots.
       CmAqi.AqiPoller,
 
+      # FirePoller: polls NASA FIRMS for active fire detections in northern Thailand.
+      CmAqi.FirePoller,
+
       # AlertBroadcaster: subscribes to PubSub and sends LINE notifications
       # when AQI thresholds are crossed. Started after PubSub so it can subscribe.
       CmAqi.AlertBroadcaster,
