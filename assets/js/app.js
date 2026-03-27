@@ -230,26 +230,39 @@ const Hooks = {
         this.markers.push(marker)
       })
 
+      // Defer heatmap to next frame — the container must be fully painted
+      // before leaflet.heat can call getImageData on the canvas.
       if (typeof L.heatLayer === "function" && heatPoints.length > 0) {
-        if (!this.map.getPane("heatPane")) {
-          this.map.createPane("heatPane")
-          this.map.getPane("heatPane").style.zIndex = 450
-        }
+        this._pendingHeatPoints = heatPoints
+        setTimeout(() => {
+          if (!this._pendingHeatPoints) return
+          try {
+            this.map.invalidateSize()
 
-        const heatRadius = this._calculateHeatRadius(heatPoints)
+            if (!this.map.getPane("heatPane")) {
+              this.map.createPane("heatPane")
+              this.map.getPane("heatPane").style.zIndex = 450
+            }
 
-        this.heatLayer = L.heatLayer(heatPoints, {
-          radius: heatRadius,
-          blur: Math.round(heatRadius * 0.6),
-          maxZoom: 12,
-          max: 1.0,
-          minOpacity: 0.4,
-          pane: "heatPane",
-          gradient: {
-            0.0: "#198754", 0.2: "#ffc107", 0.3: "#fd7e14",
-            0.4: "#dc3545", 0.6: "#6f42c1", 1.0: "#842029",
+            const heatRadius = this._calculateHeatRadius(this._pendingHeatPoints)
+
+            this.heatLayer = L.heatLayer(this._pendingHeatPoints, {
+              radius: heatRadius,
+              blur: Math.round(heatRadius * 0.6),
+              maxZoom: 12,
+              max: 1.0,
+              minOpacity: 0.4,
+              pane: "heatPane",
+              gradient: {
+                0.0: "#198754", 0.2: "#ffc107", 0.3: "#fd7e14",
+                0.4: "#dc3545", 0.6: "#6f42c1", 1.0: "#842029",
+              }
+            }).addTo(this.map)
+          } catch (e) {
+            console.warn("[AqiMap] Heatmap render deferred — container not ready:", e.message)
           }
-        }).addTo(this.map)
+          this._pendingHeatPoints = null
+        }, 100)
       }
 
       this.map.invalidateSize()

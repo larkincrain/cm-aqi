@@ -269,7 +269,8 @@ defmodule CmAqiWeb.DashboardLive do
         id="aqi-map"
         phx-hook="AqiMap"
         phx-update="ignore"
-        class="rounded-lg overflow-hidden shadow-md h-[36rem] sm:h-[40rem]"
+        class="rounded-lg overflow-hidden shadow-md"
+        style="height: 36rem"
       >
       </div>
 
