@@ -45,6 +45,229 @@ function aqiColor(value) {
   return "#842029"                     // Hazardous — Bootstrap dark red
 }
 
+// ============================================================================
+// IDW Interpolated Heatmap (Windy-style)
+// ============================================================================
+
+// AQI color stops for smooth interpolation between bands
+const AQI_STOPS = [
+  { v: 0,   r: 25,  g: 135, b: 84  }, // Good green
+  { v: 50,  r: 25,  g: 135, b: 84  },
+  { v: 51,  r: 255, g: 193, b: 7   }, // Moderate yellow
+  { v: 100, r: 255, g: 193, b: 7   },
+  { v: 101, r: 253, g: 126, b: 20  }, // USG orange
+  { v: 150, r: 253, g: 126, b: 20  },
+  { v: 151, r: 220, g: 53,  b: 69  }, // Unhealthy red
+  { v: 200, r: 220, g: 53,  b: 69  },
+  { v: 201, r: 111, g: 66,  b: 193 }, // Very Unhealthy purple
+  { v: 300, r: 111, g: 66,  b: 193 },
+  { v: 301, r: 132, g: 32,  b: 41  }, // Hazardous dark red
+  { v: 500, r: 132, g: 32,  b: 41  },
+]
+
+// Returns [r, g, b, a] for a given AQI value with smooth interpolation
+function aqiColorRGBA(value, alpha) {
+  if (value <= 0) return [AQI_STOPS[0].r, AQI_STOPS[0].g, AQI_STOPS[0].b, alpha]
+  if (value >= 500) {
+    const last = AQI_STOPS[AQI_STOPS.length - 1]
+    return [last.r, last.g, last.b, alpha]
+  }
+  for (let i = 0; i < AQI_STOPS.length - 1; i++) {
+    const a = AQI_STOPS[i], b = AQI_STOPS[i + 1]
+    if (value >= a.v && value <= b.v) {
+      const t = b.v === a.v ? 0 : (value - a.v) / (b.v - a.v)
+      return [
+        Math.round(a.r + t * (b.r - a.r)),
+        Math.round(a.g + t * (b.g - a.g)),
+        Math.round(a.b + t * (b.b - a.b)),
+        alpha
+      ]
+    }
+  }
+  return [132, 32, 41, alpha]
+}
+
+// Spatial grid index for nearest-neighbor lookup (wider radius for full coverage)
+function buildSpatialIndex(stations, cellSize) {
+  const grid = {}
+  stations.forEach(s => {
+    const col = Math.floor(s.lat / cellSize)
+    const row = Math.floor(s.lng / cellSize)
+    const key = col + "," + row
+    if (!grid[key]) grid[key] = []
+    grid[key].push(s)
+  })
+  return { grid, cellSize }
+}
+
+function queryNearby(lat, lng, index, radius) {
+  const cellRadius = radius || 2
+  const col = Math.floor(lat / index.cellSize)
+  const row = Math.floor(lng / index.cellSize)
+  const results = []
+  for (let dc = -cellRadius; dc <= cellRadius; dc++) {
+    for (let dr = -cellRadius; dr <= cellRadius; dr++) {
+      const key = (col + dc) + "," + (row + dr)
+      const cell = index.grid[key]
+      if (cell) {
+        for (let i = 0; i < cell.length; i++) results.push(cell[i])
+      }
+    }
+  }
+  return results
+}
+
+// Chiang Mai center for distance check
+const CM_LAT = 18.79, CM_LNG = 98.98, CM_RADIUS_DEG = 5.0  // ~500km
+
+// Custom Leaflet layer for IDW canvas overlay
+const IdwOverlay = L.Layer.extend({
+  initialize(options) {
+    L.setOptions(this, options)
+    this._stations = []
+    this._index = null
+    this._drawTimer = null
+  },
+
+  onAdd(map) {
+    this._map = map
+    this._canvas = L.DomUtil.create("canvas", "idw-overlay")
+    const pane = map.getPane("overlayPane")
+    pane.appendChild(this._canvas)
+    this._canvas.style.position = "absolute"
+    this._canvas.style.pointerEvents = "none"
+    this._canvas.style.opacity = "0.55"
+    this._canvas.style.zIndex = "440"
+
+    map.on("moveend", this._scheduleRedraw, this)
+    map.on("resize", this._scheduleRedraw, this)
+    this._reset()
+  },
+
+  onRemove(map) {
+    if (this._canvas && this._canvas.parentNode) {
+      this._canvas.parentNode.removeChild(this._canvas)
+    }
+    map.off("moveend", this._scheduleRedraw, this)
+    map.off("resize", this._scheduleRedraw, this)
+    if (this._drawTimer) cancelAnimationFrame(this._drawTimer)
+  },
+
+  setStations(stations) {
+    this._stations = stations
+    this._index = buildSpatialIndex(stations, 0.5)
+    this._scheduleRedraw()
+  },
+
+  setVisible(visible) {
+    if (this._canvas) this._canvas.style.display = visible ? "" : "none"
+  },
+
+  _scheduleRedraw() {
+    if (this._drawTimer) cancelAnimationFrame(this._drawTimer)
+    this._drawTimer = requestAnimationFrame(() => {
+      this._reset()
+      this._drawTimer = null
+    })
+  },
+
+  _reset() {
+    if (!this._map || !this._canvas) return
+    const map = this._map
+    const size = map.getSize()
+    const topLeft = map.containerPointToLayerPoint([0, 0])
+
+    L.DomUtil.setPosition(this._canvas, topLeft)
+    this._canvas.width = size.x
+    this._canvas.height = size.y
+    this._draw()
+  },
+
+  _draw() {
+    const map = this._map
+    const canvas = this._canvas
+    const ctx = canvas.getContext("2d")
+    const w = canvas.width
+    const h = canvas.height
+
+    if (!w || !h || this._stations.length === 0) {
+      ctx.clearRect(0, 0, w, h)
+      return
+    }
+
+    // Use a smaller offscreen canvas then scale up for smooth edges
+    const STEP = 6
+    const sw = Math.ceil(w / STEP)
+    const sh = Math.ceil(h / STEP)
+    const offscreen = document.createElement("canvas")
+    offscreen.width = sw
+    offscreen.height = sh
+    const offCtx = offscreen.getContext("2d")
+    const imgData = offCtx.createImageData(sw, sh)
+    const data = imgData.data
+    const MAX_DIST_SQ = 5.0 * 5.0  // ~500km in degrees squared — full coverage
+
+    // For each pixel in the small canvas
+    for (let sy = 0; sy < sh; sy++) {
+      for (let sx = 0; sx < sw; sx++) {
+        // Map small canvas pixel to real map pixel
+        const px = sx * STEP + STEP / 2
+        const py = sy * STEP + STEP / 2
+        const latlng = map.containerPointToLatLng([px, py])
+        const lat = latlng.lat
+        const lng = latlng.lng
+
+        // Only color within ~500km of Chiang Mai
+        const cmDlat = lat - CM_LAT
+        const cmDlng = lng - CM_LNG
+        if (cmDlat * cmDlat + cmDlng * cmDlng > CM_RADIUS_DEG * CM_RADIUS_DEG) continue
+
+        // Query stations from spatial index (search 3 cells in each direction)
+        const nearby = queryNearby(lat, lng, this._index, 3)
+
+        let wSum = 0
+        let vSum = 0
+        let exactVal = null
+
+        for (let i = 0; i < nearby.length; i++) {
+          const s = nearby[i]
+          const dlat = lat - s.lat
+          const dlng = lng - s.lng
+          const distSq = dlat * dlat + dlng * dlng
+
+          if (distSq < 0.0001) {
+            exactVal = s.aqi
+            break
+          }
+          if (distSq > MAX_DIST_SQ) continue
+
+          const weight = 1 / (distSq * distSq)  // 1/d^4 for sharper local influence
+          wSum += weight
+          vSum += weight * s.aqi
+        }
+
+        if (exactVal === null && wSum === 0) continue
+
+        const interpolated = exactVal !== null ? exactVal : vSum / wSum
+        const rgba = aqiColorRGBA(interpolated, 180)
+        const idx = (sy * sw + sx) * 4
+        data[idx] = rgba[0]
+        data[idx + 1] = rgba[1]
+        data[idx + 2] = rgba[2]
+        data[idx + 3] = rgba[3]
+      }
+    }
+
+    offCtx.putImageData(imgData, 0, 0)
+
+    // Scale up with bilinear interpolation for smooth edges
+    ctx.clearRect(0, 0, w, h)
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = "high"
+    ctx.drawImage(offscreen, 0, 0, sw, sh, 0, 0, w, h)
+  }
+})
+
 const Hooks = {
   // AqiChart: Renders a Chart.js line chart showing AQI history.
   // Each line segment is colored based on the AQI value at that point,
@@ -139,10 +362,65 @@ const Hooks = {
 
       this.markers = []
       this.fireMarkers = []
-      this.heatCircles = []
+      this._showHeatmap = true
+      this._showFires = true
+      this.idwLayer = new IdwOverlay()
+      this.idwLayer.addTo(this.map)
       this._pendingMapData = null
       this._pendingFireData = null
       this._mapReady = false
+
+      // Add toggle controls (theme-aware)
+      const toggleControl = L.control({ position: "topright" })
+      toggleControl.onAdd = () => {
+        const div = L.DomUtil.create("div", "leaflet-bar leaflet-control map-toggle-control")
+        const isDark = document.documentElement.getAttribute("data-theme") === "dark"
+        div.style.padding = "8px 12px"
+        div.style.borderRadius = "8px"
+        div.style.fontSize = "13px"
+        div.style.lineHeight = "1.8"
+        div.style.boxShadow = "0 2px 6px rgba(0,0,0,0.3)"
+        div.style.background = isDark ? "#1d232a" : "white"
+        div.style.color = isDark ? "#a6adba" : "#1f2937"
+        div.innerHTML = `
+          <label style="display:block;cursor:pointer;user-select:none">
+            <input type="checkbox" id="toggle-heatmap" checked style="margin-right:4px"> Heatmap
+          </label>
+          <label style="display:block;cursor:pointer;user-select:none">
+            <input type="checkbox" id="toggle-fires" checked style="margin-right:4px"> 🔥 Fires
+          </label>
+        `
+        L.DomEvent.disableClickPropagation(div)
+
+        // Watch for theme changes
+        const observer = new MutationObserver(() => {
+          const dark = document.documentElement.getAttribute("data-theme") === "dark"
+          div.style.background = dark ? "#1d232a" : "white"
+          div.style.color = dark ? "#a6adba" : "#1f2937"
+        })
+        observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
+        div._themeObserver = observer
+
+        return div
+      }
+      toggleControl.addTo(this.map)
+
+      // Wire up toggles
+      setTimeout(() => {
+        const heatToggle = document.getElementById("toggle-heatmap")
+        const fireToggle = document.getElementById("toggle-fires")
+        if (heatToggle) heatToggle.addEventListener("change", (e) => {
+          this._showHeatmap = e.target.checked
+          this.idwLayer.setVisible(this._showHeatmap)
+        })
+        if (fireToggle) fireToggle.addEventListener("change", (e) => {
+          this._showFires = e.target.checked
+          this.fireMarkers.forEach(m => {
+            if (this._showFires) m.addTo(this.map)
+            else m.remove()
+          })
+        })
+      }, 100)
 
       // Request fires for the current viewport. Fires are loaded lazily —
       // the client tells the server what area is visible, and the server
@@ -198,31 +476,16 @@ const Hooks = {
       this.markers.forEach(m => m.remove())
       this.markers = []
 
-      this.heatCircles.forEach(c => c.remove())
-      this.heatCircles = []
-
-      if (!this.map.getPane("heatPane")) {
-        this.map.createPane("heatPane")
-        this.map.getPane("heatPane").style.zIndex = 450
-      }
+      // Update IDW overlay with active station data
+      const idwStations = data.markers
+        .filter(s => s.active && s.aqi != null)
+        .map(s => ({ lat: s.lat, lng: s.lng, aqi: s.aqi }))
+      this.idwLayer.setStations(idwStations)
 
       data.markers.forEach(station => {
         const color = station.color || "#808080"
         const isActive = station.active
         const isInner = station.within_50km
-
-        // Add a large geographic circle colored by AQI value (not density)
-        if (isActive && station.aqi != null) {
-          const heatColor = aqiColor(station.aqi)
-          const heatCircle = L.circle([station.lat, station.lng], {
-            radius: 3000,  // 3 km radius
-            fillColor: heatColor,
-            fillOpacity: 0.25,
-            stroke: false,
-            pane: "heatPane",
-          }).addTo(this.map)
-          this.heatCircles.push(heatCircle)
-        }
 
         let radius, weight, opacity, fillOpacity
         if (isActive && isInner) {
@@ -279,7 +542,8 @@ const Hooks = {
         const marker = L.circleMarker([fire.la, fire.ln], {
           radius: 4, fillColor: "#ff6600", color: "#cc3300",
           weight: 1, fillOpacity: 0.8, pane: "firePane",
-        }).addTo(this.map)
+        })
+        if (this._showFires) marker.addTo(this.map)
 
         marker.bindPopup(
           `<strong>🔥 Fire Detection</strong><br/>` +
@@ -293,7 +557,7 @@ const Hooks = {
 
     destroyed() {
       if (this.map) {
-        this.heatCircles.forEach(c => c.remove())
+        if (this.idwLayer) this.map.removeLayer(this.idwLayer)
         this.fireMarkers.forEach(m => m.remove())
         this.markers.forEach(m => m.remove())
         this.map.remove()
