@@ -208,13 +208,22 @@ const Hooks = {
           this.markers.push(marker)
         })
 
-        // Add heatmap layer beneath the markers
+        // Add heatmap layer between tiles and markers.
+        // We create a custom pane so the heatmap canvas renders above
+        // the tile layer (z-index 200) but below markers (z-index 600).
         if (typeof L.heatLayer === "function" && heatPoints.length > 0) {
+          if (!this.map.getPane("heatPane")) {
+            this.map.createPane("heatPane")
+            this.map.getPane("heatPane").style.zIndex = 450
+          }
+
           this.heatLayer = L.heatLayer(heatPoints, {
-            radius: 35,
-            blur: 25,
+            radius: 30,
+            blur: 20,
             maxZoom: 15,
             max: 1.0,
+            minOpacity: 0.35,
+            pane: "heatPane",
             gradient: {
               0.0: "#198754",   // Good — green
               0.2: "#ffc107",   // Moderate — yellow
@@ -224,6 +233,8 @@ const Hooks = {
               1.0: "#842029",   // Hazardous — dark red
             }
           }).addTo(this.map)
+        } else if (typeof L.heatLayer === "undefined") {
+          console.warn("leaflet.heat plugin not loaded — heatmap disabled")
         }
 
         // Recalculate size after markers are added
