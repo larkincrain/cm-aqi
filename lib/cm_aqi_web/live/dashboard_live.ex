@@ -112,7 +112,6 @@ defmodule CmAqiWeb.DashboardLive do
         |> push_chart_data(stations)
         |> push_average_chart_data()
         |> push_map_data(stations)
-        |> push_fire_data()
       else
         socket
       end
@@ -158,10 +157,25 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   def handle_info({:fires_updated, fires}, socket) do
+    socket = assign(socket, fire_count: length(fires))
+
+    # Re-push fires for the last known viewport bounds
+    socket =
+      case socket.assigns[:fire_bounds] do
+        nil -> socket
+        bounds -> push_fire_data(socket, bounds)
+      end
+
+    {:noreply, socket}
+  end
+
+  # Client sends viewport bounds when the map moves — we respond with fires in view
+  @impl true
+  def handle_event("request_fires", %{"bounds" => bounds}, socket) do
     socket =
       socket
-      |> assign(fire_count: length(fires))
-      |> push_fire_data()
+      |> assign(fire_bounds: bounds)
+      |> push_fire_data(bounds)
 
     {:noreply, socket}
   end
@@ -364,12 +378,20 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   # Pushes fire detection data to the Leaflet map hook.
-  @spec push_fire_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  defp push_fire_data(socket) do
-    all_fires = FirePoller.list_fires()
+  # Pushes only fires within the given viewport bounds to the client.
+  # This keeps the payload small (typically 50-200 fires instead of 1600+).
+  @spec push_fire_data(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  defp push_fire_data(socket, bounds) do
+    south = bounds["south"]
+    north = bounds["north"]
+    west = bounds["west"]
+    east = bounds["east"]
 
     fires =
-      all_fires
+      FirePoller.list_fires()
+      |> Enum.filter(fn f ->
+        f.lat >= south and f.lat <= north and f.lng >= west and f.lng <= east
+      end)
       |> Enum.map(fn f ->
         %{
           la: Float.round(f.lat, 3),
@@ -378,9 +400,6 @@ defmodule CmAqiWeb.DashboardLive do
           c: f.confidence
         }
       end)
-
-    require Logger
-    Logger.debug("push_fire_data: sending #{length(fires)} fires to client")
 
     push_event(socket, "fire_data", %{fires: fires})
   end

@@ -170,10 +170,29 @@ const Hooks = {
       })
 
       this.handleEvent("fire_data", (data) => {
-        console.log("[AqiMap] fire_data received:", data.fires?.length, "fires, mapReady:", this._mapReady)
         if (!this._mapReady) { this._pendingFireData = data; return }
         this._processFireData(data)
       })
+
+      // Request fires for the current viewport. Fires are loaded lazily —
+      // the client tells the server what area is visible, and the server
+      // responds with only the fires in that bounding box.
+      this._requestFires = () => {
+        const b = this.map.getBounds()
+        this.pushEvent("request_fires", {
+          bounds: {
+            south: b.getSouth(),
+            north: b.getNorth(),
+            west: b.getWest(),
+            east: b.getEast()
+          }
+        })
+      }
+
+      // Request fires on initial load and whenever the map is panned/zoomed
+      this.map.on("moveend", () => this._requestFires())
+      // Initial request after map is ready
+      this.map.whenReady(() => this._requestFires())
     },
 
     _processMapData(data) {

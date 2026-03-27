@@ -38,7 +38,6 @@ defmodule CmAqiWeb.MapLive do
       if connected?(socket) do
         socket
         |> push_map_data(stations)
-        |> push_fire_data()
       else
         socket
       end
@@ -60,10 +59,23 @@ defmodule CmAqiWeb.MapLive do
   end
 
   def handle_info({:fires_updated, fires}, socket) do
+    socket = assign(socket, fire_count: length(fires))
+
+    socket =
+      case socket.assigns[:fire_bounds] do
+        nil -> socket
+        bounds -> push_fire_data(socket, bounds)
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("request_fires", %{"bounds" => bounds}, socket) do
     socket =
       socket
-      |> assign(fire_count: length(fires))
-      |> push_fire_data()
+      |> assign(fire_bounds: bounds)
+      |> push_fire_data(bounds)
 
     {:noreply, socket}
   end
@@ -128,9 +140,17 @@ defmodule CmAqiWeb.MapLive do
     push_event(socket, "map_data", %{markers: markers})
   end
 
-  defp push_fire_data(socket) do
+  defp push_fire_data(socket, bounds) do
+    south = bounds["south"]
+    north = bounds["north"]
+    west = bounds["west"]
+    east = bounds["east"]
+
     fires =
       FirePoller.list_fires()
+      |> Enum.filter(fn f ->
+        f.lat >= south and f.lat <= north and f.lng >= west and f.lng <= east
+      end)
       |> Enum.map(fn f ->
         %{
           la: Float.round(f.lat, 3),
