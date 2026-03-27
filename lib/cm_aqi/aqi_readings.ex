@@ -175,10 +175,12 @@ defmodule CmAqi.AqiReadings do
   end
 
   @doc """
-  Returns the city-wide average PM2.5 AQI at each timestamp over the last N hours.
+  Returns the city-wide average PM2.5 AQI in hourly buckets over the last N hours.
 
-  Groups all PM2.5 readings by measured_at and averages the aqi_value across
-  stations at each time point. Used to render the "Chiang Mai Average" chart.
+  Stations report at different times, so grouping by exact `measured_at` would
+  produce spikes where only 1-2 stations reported. Instead, we truncate
+  timestamps to the hour and average all readings within each hour bucket.
+  This gives a stable, representative city-wide average.
 
   ## Returns
 
@@ -191,12 +193,12 @@ defmodule CmAqi.AqiReadings do
 
     from(r in Reading,
       where: r.parameter == "pm25" and r.measured_at >= ^cutoff and not is_nil(r.aqi_value),
-      group_by: r.measured_at,
+      group_by: fragment("date_trunc('hour', ?)", r.measured_at),
       select: %{
-        measured_at: r.measured_at,
+        measured_at: fragment("date_trunc('hour', ?)", r.measured_at),
         aqi_value: fragment("CAST(ROUND(AVG(?)) AS integer)", r.aqi_value)
       },
-      order_by: [asc: r.measured_at]
+      order_by: [asc: fragment("date_trunc('hour', ?)", r.measured_at)]
     )
     |> Repo.all()
   end
