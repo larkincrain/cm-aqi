@@ -139,7 +139,7 @@ const Hooks = {
 
       this.markers = []
       this.fireMarkers = []
-      this.heatLayer = null
+      this.heatCircles = []
       this._pendingMapData = null
       this._pendingFireData = null
       this._mapReady = false
@@ -199,21 +199,30 @@ const Hooks = {
       this.markers.forEach(m => m.remove())
       this.markers = []
 
-      if (this.heatLayer) {
-        this.map.removeLayer(this.heatLayer)
-        this.heatLayer = null
-      }
+      this.heatCircles.forEach(c => c.remove())
+      this.heatCircles = []
 
-      const heatPoints = []
+      if (!this.map.getPane("heatPane")) {
+        this.map.createPane("heatPane")
+        this.map.getPane("heatPane").style.zIndex = 450
+      }
 
       data.markers.forEach(station => {
         const color = station.color || "#808080"
         const isActive = station.active
         const isInner = station.within_50km
 
+        // Add a large geographic circle colored by AQI value (not density)
         if (isActive && station.aqi != null) {
-          const intensity = Math.min(station.aqi, 500) / 500
-          heatPoints.push([station.lat, station.lng, intensity])
+          const heatColor = aqiColor(station.aqi)
+          const heatCircle = L.circle([station.lat, station.lng], {
+            radius: 3000,  // 3 km radius
+            fillColor: heatColor,
+            fillOpacity: 0.25,
+            stroke: false,
+            pane: "heatPane",
+          }).addTo(this.map)
+          this.heatCircles.push(heatCircle)
         }
 
         let radius, weight, opacity, fillOpacity
@@ -249,41 +258,6 @@ const Hooks = {
         this.markers.push(marker)
       })
 
-      // Defer heatmap to next frame — the container must be fully painted
-      // before leaflet.heat can call getImageData on the canvas.
-      if (typeof L.heatLayer === "function" && heatPoints.length > 0) {
-        this._pendingHeatPoints = heatPoints
-        setTimeout(() => {
-          if (!this._pendingHeatPoints) return
-          try {
-            this.map.invalidateSize()
-
-            if (!this.map.getPane("heatPane")) {
-              this.map.createPane("heatPane")
-              this.map.getPane("heatPane").style.zIndex = 450
-            }
-
-            const heatRadius = this._calculateHeatRadius(this._pendingHeatPoints)
-
-            this.heatLayer = L.heatLayer(this._pendingHeatPoints, {
-              radius: heatRadius,
-              blur: Math.round(heatRadius * 0.6),
-              maxZoom: 12,
-              max: 1.0,
-              minOpacity: 0.4,
-              pane: "heatPane",
-              gradient: {
-                0.0: "#198754", 0.2: "#ffc107", 0.3: "#fd7e14",
-                0.4: "#dc3545", 0.6: "#6f42c1", 1.0: "#842029",
-              }
-            }).addTo(this.map)
-          } catch (e) {
-            console.warn("[AqiMap] Heatmap render deferred — container not ready:", e.message)
-          }
-          this._pendingHeatPoints = null
-        }, 100)
-      }
-
       this.map.invalidateSize()
     },
 
@@ -318,36 +292,9 @@ const Hooks = {
       })
     },
 
-    _calculateHeatRadius(points) {
-      if (points.length < 2) return 80
-
-      let totalNearest = 0
-      for (let i = 0; i < points.length; i++) {
-        let minDist = Infinity
-        for (let j = 0; j < points.length; j++) {
-          if (i === j) continue
-          const dLat = points[i][0] - points[j][0]
-          const dLng = points[i][1] - points[j][1]
-          const dist = Math.sqrt(dLat * dLat + dLng * dLng)
-          if (dist < minDist) minDist = dist
-        }
-        totalNearest += minDist
-      }
-      const avgNearestDeg = totalNearest / points.length
-
-      const center = this.map.getCenter()
-      const pointA = this.map.latLngToContainerPoint(center)
-      const pointB = this.map.latLngToContainerPoint(
-        L.latLng(center.lat + avgNearestDeg, center.lng)
-      )
-      const pixelsPerDeg = Math.abs(pointB.y - pointA.y)
-      const halfNeighborPx = (avgNearestDeg / 2) * pixelsPerDeg
-
-      return Math.max(40, Math.min(150, Math.round(halfNeighborPx)))
-    },
-
     destroyed() {
       if (this.map) {
+        this.heatCircles.forEach(c => c.remove())
         this.fireMarkers.forEach(m => m.remove())
         this.markers.forEach(m => m.remove())
         this.map.remove()
