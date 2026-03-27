@@ -168,6 +168,53 @@ defmodule CmAqiWeb.AboutLive do
         </div>
       </div>
 
+      <%!-- Fire Detection --%>
+      <div class="card bg-base-200 shadow-md">
+        <div class="card-body">
+          <h2 class="card-title text-2xl">Fire Detection Data</h2>
+          <div class="prose max-w-none">
+            <p>
+              During burn season, knowing where active fires are burning is just as important
+              as knowing the AQI. Our map overlay shows real-time fire detections across
+              northern Thailand so you can see what's contributing to the haze.
+            </p>
+            <h3>Data Source</h3>
+            <p>
+              Fire locations come from
+              <a href="https://firms.modaps.eosdis.nasa.gov/" class="link link-primary" target="_blank">
+                NASA FIRMS</a>
+              (Fire Information for Resource Management System). Specifically, we use the
+              <strong>VIIRS</strong> (Visible Infrared Imaging Radiometer Suite) instrument
+              aboard the Suomi NPP satellite, which detects thermal hotspots from orbit.
+            </p>
+            <h3>How We Collect It</h3>
+            <p>
+              Every <strong>30 minutes</strong>, we poll the FIRMS API for near-real-time
+              fire detections within a bounding box covering northern Thailand. The API
+              returns CSV data including each fire's latitude, longitude, thermal brightness
+              (in Kelvin), and detection confidence. We keep the most recent
+              <strong>2 days</strong> of detections.
+            </p>
+            <h3>How We Store It</h3>
+            <p>
+              Unlike AQI sensor readings, fire data is <strong>ephemeral</strong> — it's held
+              in memory only and is not persisted to the database. Fires are transient by
+              nature; detections from days ago aren't actionable. When the application
+              restarts, fresh data is fetched from NASA within the first polling cycle.
+            </p>
+            <h3>How It Reaches Your Map</h3>
+            <p>
+              To keep things efficient, fire data is loaded <strong>lazily</strong>. When you
+              open the map or pan to a new area, your browser tells the server what area is
+              visible. The server filters the fire detections to only those within your
+              viewport and pushes them over the WebSocket — so you only download what you
+              can actually see. When new detections arrive from NASA, they're broadcast to
+              all connected users in real time via PubSub.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <%!-- Tech Stack --%>
       <div class="card bg-base-200 shadow-md">
         <div class="card-body">
