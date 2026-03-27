@@ -144,8 +144,22 @@ const Hooks = {
       this._pendingFireData = null
       this._mapReady = false
 
-      // Wait for the container to have real dimensions before rendering
-      // layers. Without this, leaflet.heat crashes on a 0-height canvas.
+      // Request fires for the current viewport. Fires are loaded lazily —
+      // the client tells the server what area is visible, and the server
+      // responds with only the fires in that bounding box.
+      this._requestFires = () => {
+        const b = this.map.getBounds()
+        this.pushEvent("request_fires", {
+          bounds: {
+            south: b.getSouth(),
+            north: b.getNorth(),
+            west: b.getWest(),
+            east: b.getEast()
+          }
+        })
+      }
+
+      // Wait for the container to have real dimensions before rendering.
       const waitForSize = () => {
         this.map.invalidateSize()
         if (this.el.clientHeight > 0 && this.el.clientWidth > 0) {
@@ -158,6 +172,8 @@ const Hooks = {
             this._processFireData(this._pendingFireData)
             this._pendingFireData = null
           }
+          // Request fires now that the map is sized and ready
+          this._requestFires()
         } else {
           requestAnimationFrame(waitForSize)
         }
@@ -174,25 +190,8 @@ const Hooks = {
         this._processFireData(data)
       })
 
-      // Request fires for the current viewport. Fires are loaded lazily —
-      // the client tells the server what area is visible, and the server
-      // responds with only the fires in that bounding box.
-      this._requestFires = () => {
-        const b = this.map.getBounds()
-        this.pushEvent("request_fires", {
-          bounds: {
-            south: b.getSouth(),
-            north: b.getNorth(),
-            west: b.getWest(),
-            east: b.getEast()
-          }
-        })
-      }
-
-      // Request fires on initial load and whenever the map is panned/zoomed
+      // Request fires whenever the map is panned/zoomed
       this.map.on("moveend", () => this._requestFires())
-      // Initial request after map is ready
-      this.map.whenReady(() => this._requestFires())
     },
 
     _processMapData(data) {
