@@ -269,7 +269,7 @@ defmodule CmAqiWeb.DashboardLive do
         id="aqi-map"
         phx-hook="AqiMap"
         phx-update="ignore"
-        class="rounded-lg overflow-hidden shadow-md h-72 sm:h-80"
+        class="rounded-lg overflow-hidden shadow-md h-[36rem] sm:h-[40rem]"
       >
       </div>
 
@@ -368,14 +368,12 @@ defmodule CmAqiWeb.DashboardLive do
     fires =
       FirePoller.list_fires()
       |> Enum.map(fn f ->
+        # Keep payload minimal — lat/lng as 3 decimal places (≈111m precision)
         %{
-          lat: f.lat,
-          lng: f.lng,
-          brightness: f.brightness,
-          confidence: f.confidence,
-          frp: f.frp,
-          acq_date: f.acq_date,
-          acq_time: f.acq_time
+          la: Float.round(f.lat, 3),
+          ln: Float.round(f.lng, 3),
+          b: if(f.brightness, do: round(f.brightness)),
+          c: f.confidence
         }
       end)
 

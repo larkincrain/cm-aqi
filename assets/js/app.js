@@ -259,6 +259,8 @@ const Hooks = {
         this.fireMarkers.forEach(m => m.remove())
         this.fireMarkers = []
 
+        if (!data.fires || data.fires.length === 0) return
+
         // Create a pane for fires above the heatmap but below station markers
         if (!this.map.getPane("firePane")) {
           this.map.createPane("firePane")
@@ -266,7 +268,8 @@ const Hooks = {
         }
 
         data.fires.forEach(fire => {
-          const marker = L.circleMarker([fire.lat, fire.lng], {
+          // Fields: la=lat, ln=lng, b=brightness, c=confidence
+          const marker = L.circleMarker([fire.la, fire.ln], {
             radius: 4,
             fillColor: "#ff6600",
             color: "#cc3300",
@@ -275,16 +278,10 @@ const Hooks = {
             pane: "firePane",
           }).addTo(this.map)
 
-          // Format time as HH:MM
-          const time = fire.acq_time
-          const timeStr = time.substring(0, 2) + ":" + time.substring(2, 4)
-
           marker.bindPopup(
             `<strong>🔥 Fire Detection</strong><br/>` +
-            `Brightness: ${fire.brightness ? fire.brightness.toFixed(1) : "—"}K<br/>` +
-            `FRP: ${fire.frp ? fire.frp.toFixed(1) : "—"} MW<br/>` +
-            `Confidence: ${fire.confidence || "—"}<br/>` +
-            `Detected: ${fire.acq_date} ${timeStr} UTC`
+            `Brightness: ${fire.b || "—"}K<br/>` +
+            `Confidence: ${fire.c || "—"}`
           )
 
           this.fireMarkers.push(marker)

@@ -70,6 +70,7 @@ defmodule CmAqiWeb.Router do
     # `live` routes use Phoenix LiveView — these pages update in real-time
     # over a WebSocket connection without full page reloads.
     live "/", DashboardLive, :index
+    live "/map", MapLive, :index
     live "/sensors", SensorsLive, :index
     live "/sensors/:station_id", SensorDetailLive, :show
     live "/subscribe", SubscribeLive, :index

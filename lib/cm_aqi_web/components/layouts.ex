@@ -46,6 +46,9 @@ defmodule CmAqiWeb.Layouts do
             <a href="/" class="btn btn-ghost btn-sm">Dashboard</a>
           </li>
           <li>
+            <a href="/map" class="btn btn-ghost btn-sm">Map</a>
+          </li>
+          <li>
             <a href="/sensors" class="btn btn-ghost btn-sm">Sensors</a>
           </li>
           <li>
