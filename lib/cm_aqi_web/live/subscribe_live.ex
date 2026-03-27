@@ -58,7 +58,13 @@ defmodule CmAqiWeb.SubscribeLive do
         )
       end
 
-    {:ok, assign(socket, page_title: "Subscribe")}
+    {:ok,
+     assign(socket,
+       page_title: "Subscribe",
+       meta_description:
+         "Get LINE notifications when Chiang Mai air quality changes. Set your personal AQI alert threshold for burn season PM2.5 warnings.",
+       canonical_path: "/subscribe"
+     )}
   end
 
   # ============================================================================

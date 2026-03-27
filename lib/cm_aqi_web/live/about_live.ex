@@ -11,7 +11,13 @@ defmodule CmAqiWeb.AboutLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, page_title: "About")}
+    {:ok,
+     assign(socket,
+       page_title: "About",
+       meta_description:
+         "Learn about CM AQI, Chiang Mai's burn season, the US EPA Air Quality Index scale, and how this real-time air quality monitoring app works.",
+       canonical_path: "/about"
+     )}
   end
 
   @impl true

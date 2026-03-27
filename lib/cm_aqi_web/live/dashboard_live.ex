@@ -69,9 +69,29 @@ defmodule CmAqiWeb.DashboardLive do
     # Group readings by station for the card layout
     stations = group_readings_by_station(readings)
 
+    station_count = map_size(stations)
+
     socket =
       assign(socket,
         page_title: "Dashboard",
+        meta_description:
+          "Live Chiang Mai air quality dashboard. Current average AQI #{avg_aqi || "N/A"} from #{station_count} monitoring stations across northern Thailand.",
+        canonical_path: "/",
+        json_ld: %{
+          "@context" => "https://schema.org",
+          "@type" => "WebApplication",
+          "name" => "CM AQI — Chiang Mai Air Quality",
+          "url" => CmAqiWeb.Endpoint.url(),
+          "description" =>
+            "Real-time air quality monitoring for Chiang Mai, Thailand",
+          "applicationCategory" => "UtilitiesApplication",
+          "operatingSystem" => "Web",
+          "offers" => %{
+            "@type" => "Offer",
+            "price" => "0",
+            "priceCurrency" => "USD"
+          }
+        },
         stations: stations,
         max_aqi: max_aqi,
         avg_aqi: avg_aqi,

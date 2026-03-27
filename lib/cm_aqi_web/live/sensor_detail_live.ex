@@ -114,17 +114,46 @@ defmodule CmAqiWeb.SensorDetailLive do
     color = if aqi_value, do: Calculator.color_for_aqi(aqi_value), else: "#808080"
     info = if aqi_value, do: Calculator.category_info(aqi_value)
 
+    station_name = if(latest, do: latest.station_name, else: "Sensor #{station_id}")
+    category = if(info, do: info.label, else: "No Data")
+    lat = if(latest, do: latest.latitude)
+    lng = if(latest, do: latest.longitude)
+
+    json_ld =
+      if aqi_value && lat && lng do
+        %{
+          "@context" => "https://schema.org",
+          "@type" => "Place",
+          "name" => station_name,
+          "geo" => %{
+            "@type" => "GeoCoordinates",
+            "latitude" => lat,
+            "longitude" => lng
+          },
+          "additionalProperty" => %{
+            "@type" => "PropertyValue",
+            "name" => "Air Quality Index (AQI)",
+            "value" => aqi_value,
+            "unitText" => "US EPA AQI"
+          }
+        }
+      end
+
     socket =
       assign(socket,
         station_id: station_id,
-        page_title: if(latest, do: latest.station_name, else: "Sensor #{station_id}"),
-        station_name: if(latest, do: latest.station_name, else: "Sensor #{station_id}"),
+        page_title: station_name,
+        meta_description:
+          "Current AQI #{aqi_value || "N/A"} (#{category}) at #{station_name}, Chiang Mai. Live PM2.5 air quality data with 24-hour history chart.",
+        canonical_path: "/sensors/#{station_id}",
+        json_ld: json_ld,
+        station_name: station_name,
         aqi_value: aqi_value,
-        category: if(info, do: info.label, else: "No Data"),
+        category: category,
         color: color,
         recommendation: if(info, do: info.recommendation),
-        latitude: if(latest, do: latest.latitude),
-        longitude: if(latest, do: latest.longitude),
+        latitude: lat,
+        longitude: lng,
         measured_at: if(latest, do: latest.measured_at)
       )
 

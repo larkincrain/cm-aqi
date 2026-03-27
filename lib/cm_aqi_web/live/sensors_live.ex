@@ -23,6 +23,9 @@ defmodule CmAqiWeb.SensorsLive do
     {:ok,
      assign(socket,
        page_title: "Sensors",
+       meta_description:
+         "All #{length(stations)} air quality monitoring stations in the Chiang Mai area. Compare PM2.5 AQI readings across sensors in real time.",
+       canonical_path: "/sensors",
        all_stations: stations,
        stations: stations,
        search: "",

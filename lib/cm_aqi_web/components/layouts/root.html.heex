@@ -4,13 +4,35 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
+    <%!-- Dynamic meta description — each LiveView can override via assigns --%>
     <meta
       name="description"
-      content="Real-time air quality monitoring for Chiang Mai, Thailand. Track PM2.5, AQI levels, and get LINE notifications during burn season."
+      content={assigns[:meta_description] || "Real-time air quality monitoring for Chiang Mai, Thailand. Track PM2.5, AQI levels, and get LINE notifications during burn season."}
     />
     <.live_title default="CM AQI" suffix=" — Chiang Mai Air Quality">
       {assigns[:page_title]}
     </.live_title>
+    <%!-- Canonical URL --%>
+    <link rel="canonical" href={"#{CmAqiWeb.Endpoint.url()}#{assigns[:canonical_path] || "/"}"} />
+    <%!-- Open Graph --%>
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CM AQI — Chiang Mai Air Quality" />
+    <meta property="og:title" content={"#{assigns[:page_title] || "Dashboard"} — Chiang Mai Air Quality"} />
+    <meta property="og:description" content={assigns[:meta_description] || "Real-time air quality monitoring for Chiang Mai, Thailand. Track PM2.5, AQI levels, and get LINE notifications during burn season."} />
+    <meta property="og:url" content={"#{CmAqiWeb.Endpoint.url()}#{assigns[:canonical_path] || "/"}"} />
+    <meta property="og:image" content={"#{CmAqiWeb.Endpoint.url()}/images/og-image.png"} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+    <%!-- Twitter Card --%>
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={"#{assigns[:page_title] || "Dashboard"} — Chiang Mai Air Quality"} />
+    <meta name="twitter:description" content={assigns[:meta_description] || "Real-time air quality monitoring for Chiang Mai, Thailand. Track PM2.5, AQI levels, and get LINE notifications during burn season."} />
+    <meta name="twitter:image" content={"#{CmAqiWeb.Endpoint.url()}/images/og-image.png"} />
+    <%!-- JSON-LD Structured Data --%>
+    <script :if={assigns[:json_ld]} type="application/ld+json">
+      {raw(Jason.encode!(assigns[:json_ld]))}
+    </script>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
