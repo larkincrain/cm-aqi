@@ -122,12 +122,11 @@ const Hooks = {
     }
   },
 
-  // AqiMap: Renders a Leaflet map with colored markers for each sensor station.
+  // AqiMap: Renders a Leaflet map with colored markers, heatmap, and fire dots.
   AqiMap: {
     mounted() {
       if (typeof L === "undefined") return
 
-      // Center on Chiang Mai
       this.map = L.map(this.el, {
         zoomControl: true,
         scrollWheelZoom: true,
@@ -138,164 +137,158 @@ const Hooks = {
         maxZoom: 18,
       }).addTo(this.map)
 
-      // Leaflet can miscalculate tile positions if the container size
-      // isn't fully resolved when the map initializes. Calling
-      // invalidateSize() after a frame ensures tiles render correctly.
-      requestAnimationFrame(() => this.map.invalidateSize())
-
       this.markers = []
+      this.fireMarkers = []
       this.heatLayer = null
+      this._pendingMapData = null
+      this._pendingFireData = null
+      this._mapReady = false
+
+      // Wait for the container to have real dimensions before rendering
+      // layers. Without this, leaflet.heat crashes on a 0-height canvas.
+      const waitForSize = () => {
+        this.map.invalidateSize()
+        if (this.el.clientHeight > 0 && this.el.clientWidth > 0) {
+          this._mapReady = true
+          if (this._pendingMapData) {
+            this._processMapData(this._pendingMapData)
+            this._pendingMapData = null
+          }
+          if (this._pendingFireData) {
+            this._processFireData(this._pendingFireData)
+            this._pendingFireData = null
+          }
+        } else {
+          requestAnimationFrame(waitForSize)
+        }
+      }
+      requestAnimationFrame(waitForSize)
 
       this.handleEvent("map_data", (data) => {
-        // Clear old markers
-        this.markers.forEach(m => m.remove())
-        this.markers = []
-
-        // Clear old heatmap
-        if (this.heatLayer) {
-          this.map.removeLayer(this.heatLayer)
-          this.heatLayer = null
-        }
-
-        // Build heatmap data from active stations
-        // Each point is [lat, lng, intensity] where intensity is AQI/500
-        const heatPoints = []
-
-        data.markers.forEach(station => {
-          const color = station.color || "#808080"
-          const isActive = station.active
-          const isInner = station.within_50km
-
-          // All active stations contribute to the heatmap
-          if (isActive && station.aqi != null) {
-            const intensity = Math.min(station.aqi, 500) / 500
-            heatPoints.push([station.lat, station.lng, intensity])
-          }
-
-          // Inner active: large markers. Outer active: medium. Inactive: small.
-          let radius, weight, opacity, fillOpacity
-          if (isActive && isInner) {
-            radius = 14; weight = 2; opacity = 1; fillOpacity = 0.9
-          } else if (isActive) {
-            radius = 8; weight = 1; opacity = 0.8; fillOpacity = 0.7
-          } else {
-            radius = 5; weight = 1; opacity = 0.4; fillOpacity = 0.3
-          }
-
-          const marker = L.circleMarker([station.lat, station.lng], {
-            radius, fillColor: color, color: "#fff", weight, opacity, fillOpacity,
-          }).addTo(this.map)
-
-          // Show AQI value label only on inner active markers
-          if (isActive && isInner && station.aqi != null) {
-            marker.bindTooltip(String(station.aqi), {
-              permanent: true,
-              direction: "center",
-              className: "aqi-marker-label",
-            })
-          }
-
-          marker.bindPopup(
-            `<a href="/sensors/${station.id}" class="font-bold hover:underline">${station.name}</a><br/>` +
-            (isActive
-              ? `AQI: <strong style="color:${color}">${station.aqi || "—"}</strong><br/>${station.category || "No Data"}`
-              : `<em style="color:#999">Offline</em>`)
-          )
-
-          // Click the marker circle itself to navigate to the detail page
-          if (isActive && station.id) {
-            marker.on("click", () => {
-              window.location.href = "/sensors/" + station.id
-            })
-          }
-
-          this.markers.push(marker)
-        })
-
-        // Add heatmap layer between tiles and markers.
-        // We create a custom pane so the heatmap canvas renders above
-        // the tile layer (z-index 200) but below markers (z-index 600).
-        if (typeof L.heatLayer === "function" && heatPoints.length > 0) {
-          if (!this.map.getPane("heatPane")) {
-            this.map.createPane("heatPane")
-            this.map.getPane("heatPane").style.zIndex = 450
-          }
-
-          // Calculate radius so each station's heat extends to roughly
-          // the midpoint of its nearest neighbor, ensuring full coverage.
-          const heatRadius = this._calculateHeatRadius(heatPoints)
-
-          this.heatLayer = L.heatLayer(heatPoints, {
-            radius: heatRadius,
-            blur: Math.round(heatRadius * 0.6),
-            // maxZoom must match the default view zoom so points render
-            // at full intensity. Without this, zoomed-out views get
-            // scaled-down intensity that's invisible on large screens.
-            maxZoom: 12,
-            max: 1.0,
-            minOpacity: 0.4,
-            pane: "heatPane",
-            gradient: {
-              0.0: "#198754",   // Good — green
-              0.2: "#ffc107",   // Moderate — yellow
-              0.3: "#fd7e14",   // USG — orange
-              0.4: "#dc3545",   // Unhealthy — red
-              0.6: "#6f42c1",   // Very Unhealthy — purple
-              1.0: "#842029",   // Hazardous — dark red
-            }
-          }).addTo(this.map)
-        } else if (typeof L.heatLayer === "undefined") {
-          console.warn("leaflet.heat plugin not loaded — heatmap disabled")
-        }
-
-        // Recalculate size after markers are added
-        this.map.invalidateSize()
+        if (!this._mapReady) { this._pendingMapData = data; return }
+        this._processMapData(data)
       })
 
-      // Fire detection markers
-      this.fireMarkers = []
       this.handleEvent("fire_data", (data) => {
-        // Clear old fire markers
-        this.fireMarkers.forEach(m => m.remove())
-        this.fireMarkers = []
-
-        if (!data.fires || data.fires.length === 0) return
-
-        // Create a pane for fires above the heatmap but below station markers
-        if (!this.map.getPane("firePane")) {
-          this.map.createPane("firePane")
-          this.map.getPane("firePane").style.zIndex = 500
-        }
-
-        data.fires.forEach(fire => {
-          // Fields: la=lat, ln=lng, b=brightness, c=confidence
-          const marker = L.circleMarker([fire.la, fire.ln], {
-            radius: 4,
-            fillColor: "#ff6600",
-            color: "#cc3300",
-            weight: 1,
-            fillOpacity: 0.8,
-            pane: "firePane",
-          }).addTo(this.map)
-
-          marker.bindPopup(
-            `<strong>🔥 Fire Detection</strong><br/>` +
-            `Brightness: ${fire.b || "—"}K<br/>` +
-            `Confidence: ${fire.c || "—"}`
-          )
-
-          this.fireMarkers.push(marker)
-        })
+        console.log("[AqiMap] fire_data received:", data.fires?.length, "fires, mapReady:", this._mapReady)
+        if (!this._mapReady) { this._pendingFireData = data; return }
+        this._processFireData(data)
       })
     },
 
-    // Calculates the heatmap radius in pixels so each station's heat blob
-    // extends to the midpoint of its nearest neighbor. This ensures continuous
-    // coverage with no gaps between stations.
+    _processMapData(data) {
+      this.markers.forEach(m => m.remove())
+      this.markers = []
+
+      if (this.heatLayer) {
+        this.map.removeLayer(this.heatLayer)
+        this.heatLayer = null
+      }
+
+      const heatPoints = []
+
+      data.markers.forEach(station => {
+        const color = station.color || "#808080"
+        const isActive = station.active
+        const isInner = station.within_50km
+
+        if (isActive && station.aqi != null) {
+          const intensity = Math.min(station.aqi, 500) / 500
+          heatPoints.push([station.lat, station.lng, intensity])
+        }
+
+        let radius, weight, opacity, fillOpacity
+        if (isActive && isInner) {
+          radius = 14; weight = 2; opacity = 1; fillOpacity = 0.9
+        } else if (isActive) {
+          radius = 8; weight = 1; opacity = 0.8; fillOpacity = 0.7
+        } else {
+          radius = 5; weight = 1; opacity = 0.4; fillOpacity = 0.3
+        }
+
+        const marker = L.circleMarker([station.lat, station.lng], {
+          radius, fillColor: color, color: "#fff", weight, opacity, fillOpacity,
+        }).addTo(this.map)
+
+        if (isActive && isInner && station.aqi != null) {
+          marker.bindTooltip(String(station.aqi), {
+            permanent: true, direction: "center", className: "aqi-marker-label",
+          })
+        }
+
+        marker.bindPopup(
+          `<a href="/sensors/${station.id}" class="font-bold hover:underline">${station.name}</a><br/>` +
+          (isActive
+            ? `AQI: <strong style="color:${color}">${station.aqi || "—"}</strong><br/>${station.category || "No Data"}`
+            : `<em style="color:#999">Offline</em>`)
+        )
+
+        if (isActive && station.id) {
+          marker.on("click", () => { window.location.href = "/sensors/" + station.id })
+        }
+
+        this.markers.push(marker)
+      })
+
+      if (typeof L.heatLayer === "function" && heatPoints.length > 0) {
+        if (!this.map.getPane("heatPane")) {
+          this.map.createPane("heatPane")
+          this.map.getPane("heatPane").style.zIndex = 450
+        }
+
+        const heatRadius = this._calculateHeatRadius(heatPoints)
+
+        this.heatLayer = L.heatLayer(heatPoints, {
+          radius: heatRadius,
+          blur: Math.round(heatRadius * 0.6),
+          maxZoom: 12,
+          max: 1.0,
+          minOpacity: 0.4,
+          pane: "heatPane",
+          gradient: {
+            0.0: "#198754", 0.2: "#ffc107", 0.3: "#fd7e14",
+            0.4: "#dc3545", 0.6: "#6f42c1", 1.0: "#842029",
+          }
+        }).addTo(this.map)
+      }
+
+      this.map.invalidateSize()
+    },
+
+    _processFireData(data) {
+      console.log("[AqiMap] _processFireData called with", data.fires?.length, "fires")
+      this.fireMarkers.forEach(m => m.remove())
+      this.fireMarkers = []
+
+      if (!data.fires || data.fires.length === 0) {
+        console.log("[AqiMap] No fire data to render")
+        return
+      }
+
+      if (!this.map.getPane("firePane")) {
+        this.map.createPane("firePane")
+        this.map.getPane("firePane").style.zIndex = 500
+      }
+
+      data.fires.forEach(fire => {
+        const marker = L.circleMarker([fire.la, fire.ln], {
+          radius: 4, fillColor: "#ff6600", color: "#cc3300",
+          weight: 1, fillOpacity: 0.8, pane: "firePane",
+        }).addTo(this.map)
+
+        marker.bindPopup(
+          `<strong>🔥 Fire Detection</strong><br/>` +
+          `Brightness: ${fire.b || "—"}K<br/>` +
+          `Confidence: ${fire.c || "—"}`
+        )
+
+        this.fireMarkers.push(marker)
+      })
+    },
+
     _calculateHeatRadius(points) {
       if (points.length < 2) return 80
 
-      // Find the average nearest-neighbor distance (in degrees)
       let totalNearest = 0
       for (let i = 0; i < points.length; i++) {
         let minDist = Infinity
@@ -310,8 +303,6 @@ const Hooks = {
       }
       const avgNearestDeg = totalNearest / points.length
 
-      // Convert half the average nearest-neighbor distance to pixels
-      // at the current zoom level using the map's projection
       const center = this.map.getCenter()
       const pointA = this.map.latLngToContainerPoint(center)
       const pointB = this.map.latLngToContainerPoint(
@@ -320,13 +311,13 @@ const Hooks = {
       const pixelsPerDeg = Math.abs(pointB.y - pointA.y)
       const halfNeighborPx = (avgNearestDeg / 2) * pixelsPerDeg
 
-      // Clamp to a reasonable range (40–150 pixels)
       return Math.max(40, Math.min(150, Math.round(halfNeighborPx)))
     },
 
     destroyed() {
       if (this.map) {
         this.fireMarkers.forEach(m => m.remove())
+        this.markers.forEach(m => m.remove())
         this.map.remove()
       }
     }

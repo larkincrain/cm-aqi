@@ -365,10 +365,11 @@ defmodule CmAqiWeb.DashboardLive do
   # Pushes fire detection data to the Leaflet map hook.
   @spec push_fire_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp push_fire_data(socket) do
+    all_fires = FirePoller.list_fires()
+
     fires =
-      FirePoller.list_fires()
+      all_fires
       |> Enum.map(fn f ->
-        # Keep payload minimal — lat/lng as 3 decimal places (≈111m precision)
         %{
           la: Float.round(f.lat, 3),
           ln: Float.round(f.lng, 3),
@@ -376,6 +377,9 @@ defmodule CmAqiWeb.DashboardLive do
           c: f.confidence
         }
       end)
+
+    require Logger
+    Logger.debug("push_fire_data: sending #{length(fires)} fires to client")
 
     push_event(socket, "fire_data", %{fires: fires})
   end
