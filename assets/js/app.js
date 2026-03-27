@@ -217,12 +217,19 @@ const Hooks = {
             this.map.getPane("heatPane").style.zIndex = 450
           }
 
+          // Calculate radius so each station's heat extends to roughly
+          // the midpoint of its nearest neighbor, ensuring full coverage.
+          const heatRadius = this._calculateHeatRadius(heatPoints)
+
           this.heatLayer = L.heatLayer(heatPoints, {
-            radius: 30,
-            blur: 20,
-            maxZoom: 15,
+            radius: heatRadius,
+            blur: Math.round(heatRadius * 0.6),
+            // maxZoom must match the default view zoom so points render
+            // at full intensity. Without this, zoomed-out views get
+            // scaled-down intensity that's invisible on large screens.
+            maxZoom: 12,
             max: 1.0,
-            minOpacity: 0.35,
+            minOpacity: 0.4,
             pane: "heatPane",
             gradient: {
               0.0: "#198754",   // Good — green
@@ -240,6 +247,41 @@ const Hooks = {
         // Recalculate size after markers are added
         this.map.invalidateSize()
       })
+    },
+
+    // Calculates the heatmap radius in pixels so each station's heat blob
+    // extends to the midpoint of its nearest neighbor. This ensures continuous
+    // coverage with no gaps between stations.
+    _calculateHeatRadius(points) {
+      if (points.length < 2) return 80
+
+      // Find the average nearest-neighbor distance (in degrees)
+      let totalNearest = 0
+      for (let i = 0; i < points.length; i++) {
+        let minDist = Infinity
+        for (let j = 0; j < points.length; j++) {
+          if (i === j) continue
+          const dLat = points[i][0] - points[j][0]
+          const dLng = points[i][1] - points[j][1]
+          const dist = Math.sqrt(dLat * dLat + dLng * dLng)
+          if (dist < minDist) minDist = dist
+        }
+        totalNearest += minDist
+      }
+      const avgNearestDeg = totalNearest / points.length
+
+      // Convert half the average nearest-neighbor distance to pixels
+      // at the current zoom level using the map's projection
+      const center = this.map.getCenter()
+      const pointA = this.map.latLngToContainerPoint(center)
+      const pointB = this.map.latLngToContainerPoint(
+        L.latLng(center.lat + avgNearestDeg, center.lng)
+      )
+      const pixelsPerDeg = Math.abs(pointB.y - pointA.y)
+      const halfNeighborPx = (avgNearestDeg / 2) * pixelsPerDeg
+
+      // Clamp to a reasonable range (40–150 pixels)
+      return Math.max(40, Math.min(150, Math.round(halfNeighborPx)))
     },
 
     destroyed() {
