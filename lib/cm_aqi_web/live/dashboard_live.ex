@@ -344,18 +344,19 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   # Pushes historical average AQI data for the city-wide chart.
+  # Reads from the pre-computed hourly_averages table (fast indexed read).
   @spec push_average_chart_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp push_average_chart_data(socket) do
     history = AqiReadings.list_average_readings_history()
 
     labels =
-      Enum.map(history, fn %{measured_at: dt} ->
-        dt
+      Enum.map(history, fn avg ->
+        avg.hour
         |> DateTime.add(7 * 3600, :second)
         |> Calendar.strftime("%H:%M")
       end)
 
-    values = Enum.map(history, & &1.aqi_value)
+    values = Enum.map(history, & &1.avg_aqi)
 
     push_event(socket, "chart_data:average", %{labels: labels, values: values})
   end

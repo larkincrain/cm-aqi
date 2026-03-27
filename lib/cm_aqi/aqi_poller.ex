@@ -162,6 +162,9 @@ defmodule CmAqi.AqiPoller do
       {:ok, readings, all_stations} ->
         Logger.info("AqiPoller: Successfully stored #{length(readings)} readings from #{length(all_stations)} stations")
 
+        # Compute and store the hourly average for the chart
+        AqiReadings.compute_and_store_hourly_average()
+
         # Broadcast to PubSub so LiveView dashboards update in real-time.
         # Any process subscribed to "aqi:updates" will receive this message.
         broadcast_update(readings)

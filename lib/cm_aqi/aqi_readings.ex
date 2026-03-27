@@ -30,6 +30,7 @@ defmodule CmAqi.AqiReadings do
   import Ecto.Query
   alias CmAqi.Repo
   alias CmAqi.AqiReadings.Reading
+  alias CmAqi.AqiReadings.HourlyAverage
   alias CmAqi.AqiReadings.Calculator
 
   # ============================================================================
@@ -175,32 +176,94 @@ defmodule CmAqi.AqiReadings do
   end
 
   @doc """
-  Returns the city-wide average PM2.5 AQI in hourly buckets over the last N hours.
+  Returns pre-computed hourly city-wide average AQI values over the last N hours.
 
-  Stations report at different times, so grouping by exact `measured_at` would
-  produce spikes where only 1-2 stations reported. Instead, we truncate
-  timestamps to the hour and average all readings within each hour bucket.
-  This gives a stable, representative city-wide average.
+  Reads from the `hourly_averages` table which is populated by the poller
+  each time new readings arrive. This is a simple indexed read — no aggregation.
 
   ## Returns
 
-  A list of `%{measured_at: DateTime.t(), aqi_value: integer()}` maps,
-  ordered chronologically.
+  A list of `%HourlyAverage{}` structs ordered chronologically.
   """
-  @spec list_average_readings_history(integer()) :: [map()]
+  @spec list_average_readings_history(integer()) :: [HourlyAverage.t()]
   def list_average_readings_history(hours \\ 24) do
     cutoff = DateTime.utc_now() |> DateTime.add(-hours * 3600, :second)
 
-    from(r in Reading,
-      where: r.parameter == "pm25" and r.measured_at >= ^cutoff and not is_nil(r.aqi_value),
-      group_by: fragment("date_trunc('hour', ?)", r.measured_at),
-      select: %{
-        measured_at: fragment("date_trunc('hour', ?)", r.measured_at),
-        aqi_value: fragment("CAST(ROUND(AVG(?)) AS integer)", r.aqi_value)
-      },
-      order_by: [asc: fragment("date_trunc('hour', ?)", r.measured_at)]
+    from(a in HourlyAverage,
+      where: a.hour >= ^cutoff,
+      order_by: [asc: a.hour]
     )
     |> Repo.all()
+  end
+
+  @doc """
+  Computes and upserts the city-wide hourly average AQI for the current hour.
+
+  Called by the poller after new readings are stored. Averages all PM2.5
+  readings from the current hour and writes the result to the `hourly_averages`
+  table. Only counts stations that actually reported data.
+  """
+  @spec compute_and_store_hourly_average() :: {:ok, HourlyAverage.t()} | {:error, any()}
+  def compute_and_store_hourly_average do
+    now = DateTime.utc_now()
+    hour = DateTime.truncate(now, :second) |> Map.merge(%{minute: 0, second: 0, microsecond: {0, 0}})
+
+    # Get the latest PM2.5 reading for each station (not all readings in the hour,
+    # just the most recent per station to avoid double-counting)
+    readings = list_latest_readings()
+
+    aqi_values =
+      readings
+      |> Enum.filter(&(&1.parameter == "pm25" and &1.aqi_value != nil))
+      |> Enum.map(& &1.aqi_value)
+
+    case aqi_values do
+      [] ->
+        {:error, :no_readings}
+
+      values ->
+        avg = round(Enum.sum(values) / length(values))
+
+        %HourlyAverage{}
+        |> HourlyAverage.changeset(%{
+          hour: hour,
+          avg_aqi: avg,
+          station_count: length(values)
+        })
+        |> Repo.insert(
+          on_conflict: {:replace, [:avg_aqi, :station_count, :updated_at]},
+          conflict_target: [:hour],
+          returning: true
+        )
+    end
+  end
+
+  @doc """
+  Backfills the hourly_averages table from existing aqi_readings data.
+
+  Computes the average PM2.5 AQI per hour from all historical readings
+  and inserts them. Safe to run multiple times (upserts on conflict).
+  """
+  @spec backfill_hourly_averages() :: :ok
+  def backfill_hourly_averages do
+    Repo.query!("""
+      INSERT INTO hourly_averages (hour, avg_aqi, station_count, inserted_at, updated_at)
+      SELECT
+        date_trunc('hour', measured_at) AT TIME ZONE 'UTC' AS hour,
+        CAST(ROUND(AVG(aqi_value)) AS integer) AS avg_aqi,
+        COUNT(DISTINCT station_id) AS station_count,
+        NOW() AS inserted_at,
+        NOW() AS updated_at
+      FROM aqi_readings
+      WHERE parameter = 'pm25' AND aqi_value IS NOT NULL
+      GROUP BY date_trunc('hour', measured_at)
+      ON CONFLICT (hour) DO UPDATE SET
+        avg_aqi = EXCLUDED.avg_aqi,
+        station_count = EXCLUDED.station_count,
+        updated_at = NOW()
+    """)
+
+    :ok
   end
 
   # ============================================================================
