@@ -109,17 +109,22 @@ defmodule CmAqi.FirePoller do
 
   defp fetch_fires(key) do
     url = "#{@firms_base_url}/#{key}/#{@source}/#{@coords}/#{@day_range}"
-    client = CmAqi.HttpClient.client()
 
-    case client.get(url, [{"Accept", "text/csv"}]) do
-      {:ok, %{status: 200, body: body}} when is_binary(body) ->
+    # Use Req directly (not the HttpClient wrapper) because:
+    # 1. We need to follow redirects (FIRMS does 307 from /latest/ to versioned URL)
+    # 2. We need the raw text body, not JSON-decoded
+    case Req.get(url, headers: [{"Accept", "text/csv"}]) do
+      {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
         fires = parse_csv(body)
+        Logger.info("FirePoller: Parsed #{length(fires)} fires from FIRMS API")
         {:ok, fires}
 
-      {:ok, %{status: status}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
+        Logger.error("FirePoller: FIRMS API returned status #{status}, body type: #{inspect(is_binary(body))}, body preview: #{inspect(String.slice(to_string(body), 0, 200))}")
         {:error, "FIRMS API returned status #{status}"}
 
       {:error, reason} ->
+        Logger.error("FirePoller: HTTP request failed: #{inspect(reason)}")
         {:error, reason}
     end
   end

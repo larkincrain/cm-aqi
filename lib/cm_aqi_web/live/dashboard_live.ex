@@ -68,10 +68,11 @@ defmodule CmAqiWeb.DashboardLive do
     max_aqi = AqiReadings.max_current_aqi()
     avg_aqi = AqiReadings.average_current_aqi()
 
-    # Group readings by station for the card layout
-    stations = group_readings_by_station(readings)
+    # All stations (for map), inner stations (for card scroll)
+    all_stations = group_readings_by_station(readings)
+    cards = inner_stations(all_stations)
 
-    station_count = map_size(stations)
+    station_count = map_size(cards)
 
     socket =
       assign(socket,
@@ -94,7 +95,7 @@ defmodule CmAqiWeb.DashboardLive do
             "priceCurrency" => "USD"
           }
         },
-        stations: stations,
+        stations: cards,
         max_aqi: max_aqi,
         avg_aqi: avg_aqi,
         avg_color: if(avg_aqi, do: Calculator.color_for_aqi(avg_aqi), else: "#808080"),
@@ -104,14 +105,13 @@ defmodule CmAqiWeb.DashboardLive do
         last_updated: DateTime.utc_now()
       )
 
-    # Push historical chart data for each station after the client connects.
-    # push_event only works on connected sockets (not during static render).
+    # Push data to JS hooks. Map gets ALL stations, charts get inner only.
     socket =
       if connected?(socket) do
         socket
-        |> push_chart_data(stations)
+        |> push_chart_data(cards)
         |> push_average_chart_data()
-        |> push_map_data(stations)
+        |> push_map_data(all_stations)
       else
         socket
       end
@@ -128,16 +128,16 @@ defmodule CmAqiWeb.DashboardLive do
   """
   @impl true
   def handle_info({:readings_updated, _readings}, socket) do
-    # Re-fetch all latest readings (simpler than merging partial updates)
     readings = AqiReadings.list_latest_readings()
     max_aqi = AqiReadings.max_current_aqi()
-    stations = group_readings_by_station(readings)
+    all_stations = group_readings_by_station(readings)
+    cards = inner_stations(all_stations)
 
     avg_aqi = AqiReadings.average_current_aqi()
 
     socket =
       assign(socket,
-        stations: stations,
+        stations: cards,
         max_aqi: max_aqi,
         avg_aqi: avg_aqi,
         avg_color: if(avg_aqi, do: Calculator.color_for_aqi(avg_aqi), else: "#808080"),
@@ -146,12 +146,11 @@ defmodule CmAqiWeb.DashboardLive do
         last_updated: DateTime.utc_now()
       )
 
-    # Push updated chart and map data whenever new readings arrive
     socket =
       socket
-      |> push_chart_data(stations)
+      |> push_chart_data(cards)
       |> push_average_chart_data()
-      |> push_map_data(stations)
+      |> push_map_data(all_stations)
 
     {:noreply, socket}
   end
@@ -475,20 +474,11 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   # Groups flat reading records into a map keyed by station_id.
-  # Annotates each station with `within_50km` from the poller's station list.
-  # Only includes stations within 50km for the dashboard card scroll.
+  # Returns ALL stations (for map data). The card scroll filters separately.
   @spec group_readings_by_station(list()) :: map()
   defp group_readings_by_station(readings) do
-    # Build lookup of within_50km flag from the poller's full station list
-    inner_lookup =
-      AqiPoller.list_all_stations()
-      |> Enum.into(%{}, fn s -> {s.uid, s.within_50km} end)
-
     readings
     |> Enum.group_by(& &1.station_id)
-    |> Enum.filter(fn {station_id, _} ->
-      Map.get(inner_lookup, station_id, false)
-    end)
     |> Enum.map(fn {station_id, station_readings} ->
       pm25 = Enum.find(station_readings, &(&1.parameter == "pm25"))
       pm10 = Enum.find(station_readings, &(&1.parameter == "pm10"))
@@ -511,6 +501,19 @@ defmodule CmAqiWeb.DashboardLive do
          measured_at: if(primary, do: primary.measured_at, else: nil)
        }}
     end)
+    |> Map.new()
+  end
+
+  # Filters stations to only those within 50km of Chiang Mai (for card scroll).
+  @spec inner_stations(map()) :: map()
+  defp inner_stations(all_stations) do
+    inner_uids =
+      AqiPoller.list_all_stations()
+      |> Enum.filter(& &1.within_50km)
+      |> Enum.into(MapSet.new(), & &1.uid)
+
+    all_stations
+    |> Enum.filter(fn {station_id, _} -> MapSet.member?(inner_uids, station_id) end)
     |> Map.new()
   end
 
