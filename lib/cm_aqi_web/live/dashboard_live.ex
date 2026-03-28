@@ -356,8 +356,15 @@ defmodule CmAqiWeb.DashboardLive do
         <a href="/weekly" class="btn btn-ghost btn-sm">View full page →</a>
       </div>
 
-      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
-        <div :for={day <- @days} class="card bg-base-200 shadow-md overflow-hidden">
+      <div
+        id="weekly-scroll"
+        phx-hook="ScrollRight"
+        class="flex gap-4 overflow-x-auto pb-2 -mx-2 px-2 snap-x snap-mandatory"
+      >
+        <div
+          :for={day <- @days}
+          class="card bg-base-200 shadow-md overflow-hidden flex-shrink-0 w-52 snap-start"
+        >
           <div class="h-2" style={"background-color: #{day_color(day.avg_aqi)}"}></div>
           <div class="card-body p-4">
             <div class="text-sm font-semibold text-base-content/60">

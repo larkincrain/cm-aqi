@@ -611,6 +611,16 @@ const Hooks = {
     destroyed() {
       if (this.map) this.map.remove()
     }
+  },
+
+  // ScrollRight: Scrolls a container to the right on mount so the most
+  // recent item (last child) is visible.
+  ScrollRight: {
+    mounted() {
+      requestAnimationFrame(() => {
+        this.el.scrollLeft = this.el.scrollWidth
+      })
+    }
   }
 }
 
