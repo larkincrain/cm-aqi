@@ -102,7 +102,8 @@ defmodule CmAqiWeb.DashboardLive do
         avg_category: if(avg_aqi, do: Calculator.category_for_aqi(avg_aqi), else: nil),
         show_burn_warning: max_aqi != nil and max_aqi > 150,
         fire_count: length(FirePoller.list_fires()),
-        last_updated: DateTime.utc_now()
+        last_updated: DateTime.utc_now(),
+        days: AqiReadings.list_weekly_daily_averages()
       )
 
     # Push data to JS hooks. Map gets ALL stations, charts get inner only.
@@ -112,6 +113,7 @@ defmodule CmAqiWeb.DashboardLive do
         |> push_chart_data(cards)
         |> push_average_chart_data()
         |> push_map_data(all_stations)
+        |> push_daily_chart_data(socket.assigns.days)
       else
         socket
       end
@@ -134,6 +136,7 @@ defmodule CmAqiWeb.DashboardLive do
     cards = inner_stations(all_stations)
 
     avg_aqi = AqiReadings.average_current_aqi()
+    days = AqiReadings.list_weekly_daily_averages()
 
     socket =
       assign(socket,
@@ -143,7 +146,8 @@ defmodule CmAqiWeb.DashboardLive do
         avg_color: if(avg_aqi, do: Calculator.color_for_aqi(avg_aqi), else: "#808080"),
         avg_category: if(avg_aqi, do: Calculator.category_for_aqi(avg_aqi), else: nil),
         show_burn_warning: max_aqi != nil and max_aqi > 150,
-        last_updated: DateTime.utc_now()
+        last_updated: DateTime.utc_now(),
+        days: days
       )
 
     socket =
@@ -151,6 +155,7 @@ defmodule CmAqiWeb.DashboardLive do
       |> push_chart_data(cards)
       |> push_average_chart_data()
       |> push_map_data(all_stations)
+      |> push_daily_chart_data(days)
 
     {:noreply, socket}
   end
@@ -344,6 +349,48 @@ defmodule CmAqiWeb.DashboardLive do
           </div>
         </a>
       </div>
+
+      <%!-- Weekly AQI Overview --%>
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold">Past 7 Days</h2>
+        <a href="/weekly" class="btn btn-ghost btn-sm">View full page →</a>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+        <div :for={day <- @days} class="card bg-base-200 shadow-md overflow-hidden">
+          <div class="h-2" style={"background-color: #{day_color(day.avg_aqi)}"}></div>
+          <div class="card-body p-4">
+            <div class="text-sm font-semibold text-base-content/60">
+              {day_name(day.date)}
+            </div>
+            <div class="text-lg font-bold">
+              {format_date_short(day.date)}
+            </div>
+            <div class="flex items-end gap-2 mt-1">
+              <span class="text-3xl font-bold" style={"color: #{day_color(day.avg_aqi)}"}>
+                {day.avg_aqi || "—"}
+              </span>
+              <span class="text-xs text-base-content/60 mb-1">AQI</span>
+            </div>
+            <span
+              :if={day.avg_aqi}
+              class="badge text-white text-xs whitespace-nowrap self-start"
+              style={"background-color: #{day_color(day.avg_aqi)}"}
+            >
+              {Calculator.category_for_aqi(day.avg_aqi)}
+            </span>
+            <div
+              id={"chart-day-#{day.date}"}
+              phx-hook="AqiChart"
+              phx-update="ignore"
+              data-station-id={"day-#{day.date}"}
+              class="mt-2 h-24"
+            >
+              <canvas></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
     """
   end
@@ -531,4 +578,29 @@ defmodule CmAqiWeb.DashboardLive do
     |> DateTime.add(7 * 3600, :second)
     |> Calendar.strftime("%b %d, %H:%M ICT")
   end
+
+  # Pushes hourly chart data for each day in the weekly overview.
+  defp push_daily_chart_data(socket, days) do
+    Enum.reduce(days, socket, fn day, sock ->
+      labels = Enum.map(day.hourly, fn h -> "#{h.hour}:00" end)
+      values = Enum.map(day.hourly, & &1.avg_aqi)
+      push_event(sock, "chart_data:day-#{day.date}", %{labels: labels, values: values})
+    end)
+  end
+
+  defp day_color(nil), do: "#808080"
+  defp day_color(aqi), do: Calculator.color_for_aqi(aqi)
+
+  defp day_name(date), do: Calendar.strftime(date, "%A")
+
+  defp format_date_short(date) do
+    day = date.day
+    suffix = ordinal_suffix(day)
+    Calendar.strftime(date, "%b #{day}#{suffix}")
+  end
+
+  defp ordinal_suffix(d) when d in [1, 21, 31], do: "st"
+  defp ordinal_suffix(d) when d in [2, 22], do: "nd"
+  defp ordinal_suffix(d) when d in [3, 23], do: "rd"
+  defp ordinal_suffix(_), do: "th"
 end

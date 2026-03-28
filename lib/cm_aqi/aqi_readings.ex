@@ -199,6 +199,58 @@ defmodule CmAqi.AqiReadings do
   end
 
   @doc """
+  Returns daily AQI summaries for the past 7 days.
+
+  Each entry contains the date (in ICT / UTC+7), the day's average AQI,
+  and a list of hourly averages for rendering a mini chart.
+
+  ## Returns
+
+  A list of maps: `%{date: Date.t(), avg_aqi: integer(), hourly: [%{hour: integer(), avg_aqi: integer()}]}`
+  Ordered from oldest to newest.
+  """
+  @spec list_weekly_daily_averages() :: [map()]
+  def list_weekly_daily_averages do
+    # ICT is UTC+7. We shift the hour timestamps so days align to local time.
+    now_ict = DateTime.utc_now() |> DateTime.add(7 * 3600, :second)
+    today_ict = DateTime.to_date(now_ict)
+    start_date = Date.add(today_ict, -6)
+    # Convert back to UTC for the DB query: start of start_date in ICT = start_date midnight - 7h in UTC
+    cutoff_utc = start_date |> Date.to_iso8601() |> then(&"#{&1}T00:00:00Z") |> DateTime.from_iso8601() |> elem(1) |> DateTime.add(-7 * 3600, :second)
+
+    hourly_rows =
+      from(a in HourlyAverage,
+        where: a.hour >= ^cutoff_utc,
+        order_by: [asc: a.hour]
+      )
+      |> Repo.all()
+
+    # Group by ICT date
+    hourly_rows
+    |> Enum.group_by(fn row ->
+      row.hour
+      |> DateTime.add(7 * 3600, :second)
+      |> DateTime.to_date()
+    end)
+    |> Enum.filter(fn {date, _} -> Date.compare(date, start_date) != :lt end)
+    |> Enum.sort_by(fn {date, _} -> Date.to_iso8601(date) end)
+    |> Enum.map(fn {date, rows} ->
+      values = Enum.map(rows, & &1.avg_aqi) |> Enum.filter(&(&1 != nil))
+      day_avg = if values == [], do: nil, else: round(Enum.sum(values) / length(values))
+
+      hourly =
+        rows
+        |> Enum.sort_by(& &1.hour, DateTime)
+        |> Enum.map(fn r ->
+          hour_ict = DateTime.add(r.hour, 7 * 3600, :second)
+          %{hour: hour_ict.hour, avg_aqi: r.avg_aqi}
+        end)
+
+      %{date: date, avg_aqi: day_avg, hourly: hourly}
+    end)
+  end
+
+  @doc """
   Computes and upserts the city-wide hourly average AQI for the current hour.
 
   Called by the poller after new readings are stored. Averages all PM2.5

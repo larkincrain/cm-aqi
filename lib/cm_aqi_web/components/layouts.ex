@@ -52,6 +52,9 @@ defmodule CmAqiWeb.Layouts do
             <a href="/sensors" class="btn btn-ghost btn-sm">Sensors</a>
           </li>
           <li>
+            <a href="/weekly" class="btn btn-ghost btn-sm">Weekly</a>
+          </li>
+          <li>
             <a href="/subscribe" class="btn btn-ghost btn-sm">Subscribe</a>
           </li>
           <li>

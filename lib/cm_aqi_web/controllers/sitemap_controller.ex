@@ -29,6 +29,7 @@ defmodule CmAqiWeb.SitemapController do
       [
         {"/", "always", "1.0"},
         {"/sensors", "always", "0.9"},
+        {"/weekly", "daily", "0.8"},
         {"/subscribe", "monthly", "0.7"},
         {"/about", "monthly", "0.5"}
       ]

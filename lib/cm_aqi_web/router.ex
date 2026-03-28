@@ -73,6 +73,7 @@ defmodule CmAqiWeb.Router do
     live "/map", MapLive, :index
     live "/sensors", SensorsLive, :index
     live "/sensors/:station_id", SensorDetailLive, :show
+    live "/weekly", WeeklyLive, :index
     live "/subscribe", SubscribeLive, :index
     live "/about", AboutLive, :index
   end
