@@ -1,12 +1,13 @@
 defmodule CmAqi.FirePoller do
   @moduledoc """
   A GenServer that polls the NASA FIRMS API for active fire detections
-  in northern Thailand.
+  across Southeast Asia and China.
 
   FIRMS (Fire Information for Resource Management System) provides
   near-real-time fire data from VIIRS satellites. We fetch fire hotspots
-  every 30 minutes and store them in GenServer state (no database needed
-  since fire data is ephemeral — we only show the last 2 days).
+  every 30 minutes for Myanmar, Thailand, Laos, Vietnam, and China,
+  and store them in GenServer state (no database needed since fire data
+  is ephemeral — we only show the last 2 days).
 
   The data is broadcast via PubSub so the dashboard map can show fire
   locations alongside AQI sensors.
@@ -21,14 +22,20 @@ defmodule CmAqi.FirePoller do
   # Retry after 5 minutes on failure
   @retry_interval :timer.minutes(5)
 
-  # NASA FIRMS API base URL
-  @firms_base_url "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
+  # NASA FIRMS API base URL (country endpoint for exact borders)
+  @firms_base_url "https://firms.modaps.eosdis.nasa.gov/api/country/csv"
 
   # VIIRS near-real-time data source
   @source "VIIRS_SNPP_NRT"
 
-  # Northern Thailand bounding box (west,south,east,north)
-  @coords "97.5,17.5,100.5,20.5"
+  # Countries to fetch fire data for (ISO 3166-1 alpha-3 codes)
+  @countries [
+    {"MMR", "Myanmar"},
+    {"THA", "Thailand"},
+    {"LAO", "Laos"},
+    {"VNM", "Vietnam"},
+    {"CHN", "China"}
+  ]
 
   # Fetch last 2 days of fire data
   @day_range "2"
@@ -108,23 +115,56 @@ defmodule CmAqi.FirePoller do
   end
 
   defp fetch_fires(key) do
-    url = "#{@firms_base_url}/#{key}/#{@source}/#{@coords}/#{@day_range}"
+    results =
+      @countries
+      |> Task.async_stream(
+        fn {code, name} -> {name, fetch_country_fires(key, code)} end,
+        max_concurrency: 3,
+        timeout: 30_000
+      )
+      |> Enum.reduce({[], []}, fn
+        {:ok, {name, {:ok, fires}}}, {all_fires, errors} ->
+          Logger.info("FirePoller: Fetched #{length(fires)} fires for #{name}")
+          {fires ++ all_fires, errors}
 
-    # Use Req directly (not the HttpClient wrapper) because:
-    # 1. We need to follow redirects (FIRMS does 307 from /latest/ to versioned URL)
-    # 2. We need the raw text body, not JSON-decoded
-    case Req.get(url, headers: [{"Accept", "text/csv"}]) do
-      {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
-        fires = parse_csv(body)
-        Logger.info("FirePoller: Parsed #{length(fires)} fires from FIRMS API")
+        {:ok, {name, {:error, reason}}}, {all_fires, errors} ->
+          Logger.error("FirePoller: Failed to fetch fires for #{name} — #{inspect(reason)}")
+          {all_fires, [name | errors]}
+
+        {:exit, reason}, {all_fires, errors} ->
+          Logger.error("FirePoller: Task exited — #{inspect(reason)}")
+          {all_fires, ["unknown" | errors]}
+      end)
+
+    case results do
+      {fires, []} ->
         {:ok, fires}
 
+      {fires, errors} when fires != [] ->
+        Logger.warning("FirePoller: Partial success — failed for: #{Enum.join(errors, ", ")}")
+        {:ok, fires}
+
+      {[], _errors} ->
+        {:error, "All country fetches failed"}
+    end
+  end
+
+  defp fetch_country_fires(key, country_code) do
+    url = "#{@firms_base_url}/#{key}/#{@source}/#{country_code}/#{@day_range}"
+
+    case Req.get(url, headers: [{"Accept", "text/csv"}], receive_timeout: 25_000) do
+      {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
+        {:ok, parse_csv(body)}
+
       {:ok, %Req.Response{status: status, body: body}} ->
-        Logger.error("FirePoller: FIRMS API returned status #{status}, body type: #{inspect(is_binary(body))}, body preview: #{inspect(String.slice(to_string(body), 0, 200))}")
+        Logger.error(
+          "FirePoller: FIRMS API returned status #{status} for #{country_code}, " <>
+            "body preview: #{inspect(String.slice(to_string(body), 0, 200))}"
+        )
+
         {:error, "FIRMS API returned status #{status}"}
 
       {:error, reason} ->
-        Logger.error("FirePoller: HTTP request failed: #{inspect(reason)}")
         {:error, reason}
     end
   end

@@ -64,6 +64,49 @@ defmodule CmAqiWeb.SensorDetailLive do
           <p class="text-xs text-base-content/40 mt-2">
             Last updated: {format_datetime(@measured_at)}
           </p>
+
+          <a
+            :if={@station_url}
+            href={@station_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn-outline btn-sm mt-3 gap-1"
+          >
+            View on AQICN <.icon name="hero-arrow-top-right-on-square-mini" class="size-4" />
+          </a>
+        </div>
+      </div>
+
+      <%!-- Pollutant readings --%>
+      <div :if={@pollutants != []} class="card bg-base-200 shadow-md">
+        <div class="card-body p-5">
+          <h2 class="card-title text-base">Pollutants</h2>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
+            <div :for={p <- @pollutants} class="bg-base-300 rounded-lg p-3">
+              <p class="text-xs text-base-content/50">{p.label}</p>
+              <p class="text-2xl font-bold mt-1" style={pollutant_color(p)}>
+                {format_value(p.value)}
+              </p>
+              <p class="text-xs text-base-content/40">
+                {if p.key == @dominant_pollutant, do: "Dominant", else: "AQI"}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <%!-- Weather conditions --%>
+      <div :if={@weather != []} class="card bg-base-200 shadow-md">
+        <div class="card-body p-5">
+          <h2 class="card-title text-base">Weather Conditions</h2>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
+            <div :for={w <- @weather} class="bg-base-300 rounded-lg p-3">
+              <p class="text-xs text-base-content/50">{w.label}</p>
+              <p class="text-xl font-bold mt-1">
+                {format_value(w.value)}<span class="text-sm font-normal text-base-content/60">{w.unit}</span>
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -119,6 +162,16 @@ defmodule CmAqiWeb.SensorDetailLive do
     lat = if(latest, do: latest.latitude)
     lng = if(latest, do: latest.longitude)
 
+    # Fetch detailed pollutant and weather data from AQICN feed API
+    {pollutants, weather, dominant_pollutant, station_url} =
+      case AqiReadings.fetch_station_details(station_id) do
+        {:ok, details} ->
+          {details.pollutants, details.weather, details.dominant_pollutant, details.station_url}
+
+        {:error, _reason} ->
+          {[], [], nil, nil}
+      end
+
     json_ld =
       if aqi_value && lat && lng do
         %{
@@ -154,7 +207,11 @@ defmodule CmAqiWeb.SensorDetailLive do
         recommendation: if(info, do: info.recommendation),
         latitude: lat,
         longitude: lng,
-        measured_at: if(latest, do: latest.measured_at)
+        measured_at: if(latest, do: latest.measured_at),
+        pollutants: pollutants,
+        weather: weather,
+        dominant_pollutant: dominant_pollutant,
+        station_url: station_url
       )
 
     if connected?(socket) do
@@ -180,4 +237,14 @@ defmodule CmAqiWeb.SensorDetailLive do
     |> DateTime.add(7 * 3600, :second)
     |> Calendar.strftime("%b %d, %H:%M ICT")
   end
+
+  defp format_value(val) when is_float(val), do: :erlang.float_to_binary(val, decimals: 1)
+  defp format_value(val), do: to_string(val)
+
+  defp pollutant_color(%{value: val}) when is_number(val) and val > 0 do
+    aqi = round(val)
+    "color: #{Calculator.color_for_aqi(min(aqi, 500))}"
+  end
+
+  defp pollutant_color(_), do: ""
 end

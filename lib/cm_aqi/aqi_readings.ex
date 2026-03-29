@@ -322,6 +322,104 @@ defmodule CmAqi.AqiReadings do
   end
 
   # ============================================================================
+  # Fetching Station Details
+  # ============================================================================
+
+  @waqi_base_url "https://api.waqi.info"
+
+  @doc """
+  Fetches detailed pollutant and weather data for a single station from the AQICN API.
+
+  Returns individual AQI values for each pollutant (PM2.5, PM10, O3, NO2, SO2, CO)
+  plus weather data (temperature, humidity, wind, pressure) when available.
+
+  ## Returns
+
+  `{:ok, details}` where details is a map with:
+  - `:pollutants` — list of `%{key, label, value}` for air quality parameters
+  - `:weather` — list of `%{key, label, value, unit}` for weather parameters
+  - `:dominant_pollutant` — the dominant pollutant key (e.g., "pm25")
+  - `:station_url` — link to the AQICN station page
+
+  Or `{:error, reason}` on failure.
+  """
+  @spec fetch_station_details(String.t()) :: {:ok, map()} | {:error, any()}
+  def fetch_station_details(station_id) do
+    client = CmAqi.HttpClient.client()
+    token = Application.get_env(:cm_aqi, :aqicn_api_token)
+
+    url = "#{@waqi_base_url}/feed/@#{station_id}/?token=#{token}"
+
+    case client.get(url, [{"Accept", "application/json"}]) do
+      {:ok, %{status: 200, body: %{"status" => "ok", "data" => data}}} ->
+        {:ok, parse_station_details(data)}
+
+      {:ok, %{status: 200, body: %{"status" => "error", "data" => msg}}} ->
+        {:error, msg}
+
+      {:ok, %{status: status}} ->
+        {:error, "AQICN API returned status #{status}"}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @pollutant_labels %{
+    "pm25" => "PM2.5",
+    "pm10" => "PM10",
+    "o3" => "Ozone (O₃)",
+    "no2" => "NO₂",
+    "so2" => "SO₂",
+    "co" => "CO"
+  }
+
+  @weather_labels [
+    {"t", "Temperature", "°C"},
+    {"h", "Humidity", "%"},
+    {"w", "Wind", "m/s"},
+    {"p", "Pressure", "hPa"},
+    {"d", "Dew Point", "°C"}
+  ]
+
+  defp parse_station_details(data) do
+    iaqi = Map.get(data, "iaqi", %{})
+
+    pollutants =
+      @pollutant_labels
+      |> Enum.map(fn {key, label} ->
+        case get_in(iaqi, [key, "v"]) do
+          nil -> nil
+          val -> %{key: key, label: label, value: val}
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    weather =
+      @weather_labels
+      |> Enum.map(fn {key, label, unit} ->
+        case get_in(iaqi, [key, "v"]) do
+          nil -> nil
+          val -> %{key: key, label: label, value: val, unit: unit}
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    station_url =
+      case get_in(data, ["city", "url"]) do
+        url when is_binary(url) -> url
+        _ -> "https://aqicn.org/city/@#{Map.get(data, "idx", "")}"
+      end
+
+    %{
+      pollutants: pollutants,
+      weather: weather,
+      dominant_pollutant: Map.get(data, "dominentpol"),
+      station_url: station_url
+    }
+  end
+
+  # ============================================================================
   # Creating / Upserting Readings
   # ============================================================================
 
