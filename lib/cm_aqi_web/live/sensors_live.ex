@@ -24,7 +24,7 @@ defmodule CmAqiWeb.SensorsLive do
      assign(socket,
        page_title: "Sensors",
        meta_description:
-         "All #{length(stations)} air quality monitoring stations in the Chiang Mai area. Compare PM2.5 AQI readings across sensors in real time.",
+         "All #{length(stations)} air quality monitoring stations in the Chiang Mai region. Compare PM2.5 AQI readings across sensors in real time.",
        canonical_path: "/sensors",
        all_stations: stations,
        stations: stations,
@@ -64,7 +64,7 @@ defmodule CmAqiWeb.SensorsLive do
       <div class="text-center">
         <h1 class="text-3xl font-bold">All Sensors</h1>
         <p class="text-base-content/60 mt-1">
-          {length(@all_stations)} stations within 50km of Chiang Mai
+          {length(@all_stations)} monitoring stations
         </p>
       </div>
 
@@ -121,6 +121,9 @@ defmodule CmAqiWeb.SensorsLive do
             <p class="text-xs text-base-content/50">
               {station.category}
             </p>
+            <p class="text-xs text-base-content/40">
+              Last data: {format_datetime(station.measured_at)}
+            </p>
           </div>
 
           <div class="text-right shrink-0">
@@ -144,17 +147,10 @@ defmodule CmAqiWeb.SensorsLive do
   # ============================================================================
 
   # Builds a flat list of station maps from the latest readings.
-  # Only includes stations within 50km of Chiang Mai.
+  # Includes all sensors that we collect data from.
   defp build_station_list(readings) do
-    # Build lookup of within_50km flag from the poller
-    inner_lookup =
-      CmAqi.AqiPoller.list_all_stations()
-      |> Enum.into(%{}, fn s -> {s.uid, s.within_50km} end)
-
     readings
-    |> Enum.filter(fn r ->
-      r.parameter == "pm25" and Map.get(inner_lookup, r.station_id, false)
-    end)
+    |> Enum.filter(fn r -> r.parameter == "pm25" end)
     |> Enum.map(fn r ->
       aqi = r.aqi_value
       color = if aqi, do: Calculator.color_for_aqi(aqi), else: "#808080"
@@ -164,7 +160,8 @@ defmodule CmAqiWeb.SensorsLive do
         name: r.station_name,
         aqi_value: aqi,
         category: if(aqi, do: Calculator.category_for_aqi(aqi), else: "No Data"),
-        color: color
+        color: color,
+        measured_at: r.measured_at
       }
     end)
     |> Enum.sort_by(& &1.aqi_value, :desc)
@@ -193,5 +190,13 @@ defmodule CmAqiWeb.SensorsLive do
 
   defp sort_stations(stations, _reading) do
     Enum.sort_by(stations, fn s -> s.aqi_value || 0 end, :desc)
+  end
+
+  defp format_datetime(nil), do: "—"
+
+  defp format_datetime(%DateTime{} = dt) do
+    dt
+    |> DateTime.add(7 * 3600, :second)
+    |> Calendar.strftime("%b %d, %H:%M ICT")
   end
 end
