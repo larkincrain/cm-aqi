@@ -468,6 +468,54 @@ const Hooks = {
         this._processFireData(data)
       })
 
+      this.handleEvent("popup_chart_data", (data) => {
+        const canvasEl = document.getElementById("popup-chart-" + data.station_id)
+        const loadingEl = document.getElementById("popup-loading-" + data.station_id)
+        if (!canvasEl || typeof Chart === "undefined") return
+
+        if (loadingEl) loadingEl.style.display = "none"
+
+        // Destroy previous chart for this station if any
+        if (this._popupCharts && this._popupCharts[data.station_id]) {
+          this._popupCharts[data.station_id].destroy()
+        }
+
+        if (!this._popupCharts) this._popupCharts = {}
+
+        if (data.values.length === 0) {
+          canvasEl.parentElement.innerHTML = '<div class="sensor-popup-chart-loading">No data available</div>'
+          return
+        }
+
+        this._popupCharts[data.station_id] = new Chart(canvasEl.getContext("2d"), {
+          type: "line",
+          data: {
+            labels: data.labels,
+            datasets: [{
+              data: data.values,
+              segment: {
+                borderColor: ctx => aqiColor(ctx.p1.parsed.y),
+                backgroundColor: ctx => aqiColor(ctx.p1.parsed.y) + "20",
+              },
+              borderColor: "#198754",
+              fill: true,
+              tension: 0.3,
+              pointRadius: 0,
+              borderWidth: 1.5,
+            }]
+          },
+          options: {
+            responsive: false,
+            animation: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: true, mode: "index", intersect: false } },
+            scales: {
+              x: { display: true, ticks: { maxTicksLimit: 4, font: { size: 9 } } },
+              y: { display: true, beginAtZero: true, ticks: { maxTicksLimit: 4, font: { size: 9 } } }
+            }
+          }
+        })
+      })
+
       // Request fires whenever the map is panned/zoomed
       this.map.on("moveend", () => this._requestFires())
     },
@@ -475,6 +523,9 @@ const Hooks = {
     _processMapData(data) {
       this.markers.forEach(m => m.remove())
       this.markers = []
+
+      // Track popup charts so they can be destroyed
+      if (!this._popupCharts) this._popupCharts = {}
 
       // Update IDW overlay with active station data
       const idwStations = data.markers
@@ -503,15 +554,42 @@ const Hooks = {
           })
         }
 
-        marker.bindPopup(
-          `<a href="/sensors/${station.id}" class="font-bold hover:underline">${station.name}</a><br/>` +
-          (isActive
-            ? `AQI: <strong style="color:${color}">${station.aqi || "—"}</strong><br/>${station.category || "No Data"}`
-            : `<em style="color:#999">Inactive</em>`)
-        )
-
         if (isActive && station.id) {
-          marker.on("click", () => { window.location.href = "/sensors/" + station.id })
+          const popupContent =
+            `<div class="sensor-popup">` +
+              `<div class="sensor-popup-header">` +
+                `<span class="sensor-popup-name">${station.name}</span>` +
+                `<span class="sensor-popup-category" style="background-color:${color}">${station.category || "No Data"}</span>` +
+              `</div>` +
+              `<div class="sensor-popup-aqi" style="color:${color}">${station.aqi ?? "—"}</div>` +
+              `<div class="sensor-popup-aqi-label">AQI</div>` +
+              `<div class="sensor-popup-chart-container">` +
+                `<canvas id="popup-chart-${station.id}" width="260" height="80"></canvas>` +
+                `<div class="sensor-popup-chart-loading" id="popup-loading-${station.id}">Loading chart...</div>` +
+              `</div>` +
+              `<a href="/sensors/${station.id}" class="sensor-popup-btn">View Details &rarr;</a>` +
+            `</div>`
+
+          marker.bindPopup(popupContent, { maxWidth: 300, minWidth: 280, className: "sensor-detail-popup" })
+
+          marker.on("popupopen", () => {
+            this.pushEvent("request_chart_data", { station_id: station.id })
+          })
+
+          marker.on("popupclose", () => {
+            if (this._popupCharts[station.id]) {
+              this._popupCharts[station.id].destroy()
+              delete this._popupCharts[station.id]
+            }
+          })
+        } else {
+          marker.bindPopup(
+            `<div class="sensor-popup">` +
+              `<div class="sensor-popup-name">${station.name}</div>` +
+              `<em style="color:#999">Inactive</em>` +
+            `</div>`,
+            { className: "sensor-detail-popup" }
+          )
         }
 
         this.markers.push(marker)

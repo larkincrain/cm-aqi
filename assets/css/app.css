@@ -120,3 +120,121 @@
 .aqi-marker-label::before {
   display: none !important;
 }
+
+/* Sensor detail popup on map */
+.sensor-detail-popup .leaflet-popup-content-wrapper {
+  border-radius: 12px;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.sensor-detail-popup .leaflet-popup-content {
+  margin: 0;
+  width: auto !important;
+}
+
+.sensor-popup {
+  padding: 14px 16px;
+  min-width: 260px;
+}
+
+.sensor-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.sensor-popup-name {
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1.3;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sensor-popup-category {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sensor-popup-aqi {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.sensor-popup-aqi-label {
+  font-size: 11px;
+  opacity: 0.5;
+  margin-bottom: 8px;
+}
+
+.sensor-popup-chart-container {
+  position: relative;
+  height: 80px;
+  margin-bottom: 10px;
+}
+
+.sensor-popup-chart-container canvas {
+  display: block;
+}
+
+.sensor-popup-chart-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  opacity: 0.5;
+}
+
+.sensor-popup-btn {
+  display: block;
+  text-align: center;
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: #1f2937;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.sensor-popup-btn:hover {
+  background: #374151;
+  text-decoration: none;
+  color: #fff;
+}
+
+/* Dark theme popup adjustments */
+[data-theme="dark"] .sensor-detail-popup .leaflet-popup-content-wrapper {
+  background: #1d232a;
+  color: #a6adba;
+}
+
+[data-theme="dark"] .sensor-detail-popup .leaflet-popup-tip {
+  background: #1d232a;
+}
+
+[data-theme="dark"] .sensor-popup-btn {
+  background: #374151;
+}
+
+[data-theme="dark"] .sensor-popup-btn:hover {
+  background: #4b5563;
+}
