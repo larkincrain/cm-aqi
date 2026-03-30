@@ -12,6 +12,10 @@
     <.live_title default="CM AQI" suffix=" — Chiang Mai Air Quality">
       {assigns[:page_title]}
     </.live_title>
+    <%!-- Favicons --%>
+    <link rel="icon" href={~p"/favicon.ico"} sizes="32x32" />
+    <link rel="icon" type="image/png" href={~p"/images/icon-192.png"} sizes="192x192" />
+    <link rel="apple-touch-icon" href={~p"/images/apple-touch-icon.png"} />
     <%!-- Canonical URL --%>
     <link rel="canonical" href={"#{CmAqiWeb.Endpoint.url()}#{assigns[:canonical_path] || "/"}"} />
     <%!-- Open Graph --%>
