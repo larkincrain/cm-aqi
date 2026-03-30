@@ -110,34 +110,43 @@ defmodule CmAqiWeb.MapLive do
   # ============================================================================
 
   defp push_map_data(socket, stations_with_readings) do
-    all_poller_stations = AqiPoller.list_all_stations()
+    reading_ids = MapSet.new(Map.keys(stations_with_readings))
 
-    reading_lookup =
+    reading_markers =
       stations_with_readings
-      |> Enum.into(%{}, fn {station_id, s} -> {station_id, s} end)
-
-    markers =
-      all_poller_stations
-      |> Enum.filter(fn s -> s.lat != nil and s.lng != nil end)
-      |> Enum.map(fn s ->
-        case Map.get(reading_lookup, s.uid) do
-          nil ->
-            %{
-              id: s.uid, lat: s.lat, lng: s.lng, name: s.name,
-              aqi: nil, color: "#808080", category: "Inactive",
-              active: false
-            }
-
-          station ->
-            %{
-              id: s.uid, lat: s.lat, lng: s.lng, name: station.name,
-              aqi: station.aqi_value, color: station.color, category: station.category,
-              active: station.active
-            }
-        end
+      |> Enum.filter(fn {_id, s} -> s.latitude != nil and s.longitude != nil end)
+      |> Enum.map(fn {station_id, station} ->
+        %{
+          id: station_id,
+          lat: station.latitude,
+          lng: station.longitude,
+          name: station.name,
+          aqi: station.aqi_value,
+          color: station.color,
+          category: station.category,
+          active: station.active
+        }
       end)
 
-    push_event(socket, "map_data", %{markers: markers})
+    poller_only_markers =
+      AqiPoller.list_all_stations()
+      |> Enum.filter(fn s ->
+        s.lat != nil and s.lng != nil and not MapSet.member?(reading_ids, s.uid)
+      end)
+      |> Enum.map(fn s ->
+        %{
+          id: s.uid,
+          lat: s.lat,
+          lng: s.lng,
+          name: s.name,
+          aqi: nil,
+          color: "#808080",
+          category: "Inactive",
+          active: false
+        }
+      end)
+
+    push_event(socket, "map_data", %{markers: reading_markers ++ poller_only_markers})
   end
 
   defp push_fire_data(socket, bounds) do
@@ -181,6 +190,8 @@ defmodule CmAqiWeb.MapLive do
          aqi_value: aqi_value,
          category: if(active, do: (if primary, do: primary.category, else: nil), else: "Inactive"),
          color: color,
+         latitude: if(primary, do: primary.latitude, else: nil),
+         longitude: if(primary, do: primary.longitude, else: nil),
          active: active
        }}
     end)

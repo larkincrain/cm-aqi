@@ -476,53 +476,50 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   # Pushes station marker data to the Leaflet map hook.
-  # Merges readings with the full station list from the poller.
+  # Builds markers from DB readings (primary) plus any poller-only stations.
   # Stations whose latest reading is not from today appear grey/inactive
   # and are excluded from the IDW color overlay.
   @spec push_map_data(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
   defp push_map_data(socket, stations_with_readings) do
-    # Get the full list of all known stations from the poller
-    all_poller_stations = AqiPoller.list_all_stations()
+    # Markers from DB readings — these are stations we have data for
+    reading_ids = MapSet.new(Map.keys(stations_with_readings))
 
-    # Build a lookup of station reading data by uid
-    reading_lookup =
+    reading_markers =
       stations_with_readings
-      |> Enum.into(%{}, fn {station_id, s} -> {station_id, s} end)
-
-    markers =
-      all_poller_stations
-      |> Enum.filter(fn s -> s.lat != nil and s.lng != nil end)
-      |> Enum.map(fn s ->
-        case Map.get(reading_lookup, s.uid) do
-          nil ->
-            # No readings at all — inactive
-            %{
-              id: s.uid,
-              lat: s.lat,
-              lng: s.lng,
-              name: s.name,
-              aqi: nil,
-              color: "#808080",
-              category: "Inactive",
-              active: false
-            }
-
-          station ->
-            # Has readings — active/inactive based on today's date check
-            %{
-              id: s.uid,
-              lat: s.lat,
-              lng: s.lng,
-              name: station.name,
-              aqi: station.aqi_value,
-              color: station.color,
-              category: station.category,
-              active: station.active
-            }
-        end
+      |> Enum.filter(fn {_id, s} -> s.latitude != nil and s.longitude != nil end)
+      |> Enum.map(fn {station_id, station} ->
+        %{
+          id: station_id,
+          lat: station.latitude,
+          lng: station.longitude,
+          name: station.name,
+          aqi: station.aqi_value,
+          color: station.color,
+          category: station.category,
+          active: station.active
+        }
       end)
 
-    push_event(socket, "map_data", %{markers: markers})
+    # Add any poller-known stations that don't have DB readings yet
+    poller_only_markers =
+      AqiPoller.list_all_stations()
+      |> Enum.filter(fn s ->
+        s.lat != nil and s.lng != nil and not MapSet.member?(reading_ids, s.uid)
+      end)
+      |> Enum.map(fn s ->
+        %{
+          id: s.uid,
+          lat: s.lat,
+          lng: s.lng,
+          name: s.name,
+          aqi: nil,
+          color: "#808080",
+          category: "Inactive",
+          active: false
+        }
+      end)
+
+    push_event(socket, "map_data", %{markers: reading_markers ++ poller_only_markers})
   end
 
   # Groups flat reading records into a map keyed by station_id.
