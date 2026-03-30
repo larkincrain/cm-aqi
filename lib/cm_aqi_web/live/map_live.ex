@@ -109,30 +109,30 @@ defmodule CmAqiWeb.MapLive do
   # Private Helpers — shared with DashboardLive
   # ============================================================================
 
-  defp push_map_data(socket, active_stations) do
-    all_stations = AqiPoller.list_all_stations()
+  defp push_map_data(socket, stations_with_readings) do
+    all_poller_stations = AqiPoller.list_all_stations()
 
-    active_lookup =
-      active_stations
+    reading_lookup =
+      stations_with_readings
       |> Enum.into(%{}, fn {station_id, s} -> {station_id, s} end)
 
     markers =
-      all_stations
+      all_poller_stations
       |> Enum.filter(fn s -> s.lat != nil and s.lng != nil end)
       |> Enum.map(fn s ->
-        case Map.get(active_lookup, s.uid) do
+        case Map.get(reading_lookup, s.uid) do
           nil ->
             %{
               id: s.uid, lat: s.lat, lng: s.lng, name: s.name,
-              aqi: nil, color: "#808080", category: "Offline",
-              active: false, within_50km: s.within_50km
+              aqi: nil, color: "#808080", category: "Inactive",
+              active: false
             }
 
-          active ->
+          station ->
             %{
-              id: s.uid, lat: s.lat, lng: s.lng, name: active.name,
-              aqi: active.aqi_value, color: active.color, category: active.category,
-              active: true, within_50km: s.within_50km
+              id: s.uid, lat: s.lat, lng: s.lng, name: station.name,
+              aqi: station.aqi_value, color: station.color, category: station.category,
+              active: station.active
             }
         end
       end)
@@ -164,22 +164,47 @@ defmodule CmAqiWeb.MapLive do
   end
 
   defp group_readings_by_station(readings) do
+    today_ict = today_in_ict()
+
     readings
     |> Enum.group_by(& &1.station_id)
     |> Enum.map(fn {station_id, station_readings} ->
       pm25 = Enum.find(station_readings, &(&1.parameter == "pm25"))
       primary = pm25 || Enum.find(station_readings, &(&1.parameter == "pm10"))
       aqi_value = if primary, do: primary.aqi_value, else: nil
-      color = if aqi_value, do: Calculator.color_for_aqi(aqi_value), else: "#808080"
+      active = reading_from_today?(primary, today_ict)
+      color = if active && aqi_value, do: Calculator.color_for_aqi(aqi_value), else: "#808080"
 
       {station_id,
        %{
          name: if(primary, do: primary.station_name, else: "Unknown"),
          aqi_value: aqi_value,
-         category: if(primary, do: primary.category, else: nil),
-         color: color
+         category: if(active, do: (if primary, do: primary.category, else: nil), else: "Inactive"),
+         color: color,
+         active: active
        }}
     end)
     |> Map.new()
+  end
+
+  defp today_in_ict do
+    DateTime.utc_now()
+    |> DateTime.add(7 * 3600, :second)
+    |> DateTime.to_date()
+  end
+
+  defp reading_from_today?(nil, _today), do: false
+
+  defp reading_from_today?(reading, today_ict) do
+    case reading.measured_at do
+      nil ->
+        false
+
+      dt ->
+        dt
+        |> DateTime.add(7 * 3600, :second)
+        |> DateTime.to_date()
+        |> Date.compare(today_ict) == :eq
+    end
   end
 end

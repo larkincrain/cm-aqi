@@ -68,9 +68,9 @@ defmodule CmAqiWeb.DashboardLive do
     max_aqi = AqiReadings.max_current_aqi()
     avg_aqi = AqiReadings.average_current_aqi()
 
-    # All stations (for map), inner stations (for card scroll)
+    # All stations grouped by station_id — active flag based on today's reading
     all_stations = group_readings_by_station(readings)
-    cards = inner_stations(all_stations)
+    cards = active_stations(all_stations)
 
     station_count = map_size(cards)
 
@@ -133,7 +133,7 @@ defmodule CmAqiWeb.DashboardLive do
     readings = AqiReadings.list_latest_readings()
     max_aqi = AqiReadings.max_current_aqi()
     all_stations = group_readings_by_station(readings)
-    cards = inner_stations(all_stations)
+    cards = active_stations(all_stations)
 
     avg_aqi = AqiReadings.average_current_aqi()
     days = AqiReadings.list_weekly_daily_averages()
@@ -476,26 +476,26 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   # Pushes station marker data to the Leaflet map hook.
-  # Merges active station readings with the full station list from the poller
-  # so inactive stations appear greyed out on the map.
+  # Merges readings with the full station list from the poller.
+  # Stations whose latest reading is not from today appear grey/inactive
+  # and are excluded from the IDW color overlay.
   @spec push_map_data(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
-  defp push_map_data(socket, active_stations) do
-    # Get the full list of all stations (active + inactive) from the poller
-    all_stations = AqiPoller.list_all_stations()
+  defp push_map_data(socket, stations_with_readings) do
+    # Get the full list of all known stations from the poller
+    all_poller_stations = AqiPoller.list_all_stations()
 
-    # Build a lookup of active station data by uid
-    active_lookup =
-      active_stations
+    # Build a lookup of station reading data by uid
+    reading_lookup =
+      stations_with_readings
       |> Enum.into(%{}, fn {station_id, s} -> {station_id, s} end)
 
     markers =
-      all_stations
+      all_poller_stations
       |> Enum.filter(fn s -> s.lat != nil and s.lng != nil end)
       |> Enum.map(fn s ->
-        # Check if this station has active readings
-        case Map.get(active_lookup, s.uid) do
+        case Map.get(reading_lookup, s.uid) do
           nil ->
-            # Inactive station — grey marker
+            # No readings at all — inactive
             %{
               id: s.uid,
               lat: s.lat,
@@ -503,23 +503,21 @@ defmodule CmAqiWeb.DashboardLive do
               name: s.name,
               aqi: nil,
               color: "#808080",
-              category: "Offline",
-              active: false,
-              within_50km: s.within_50km
+              category: "Inactive",
+              active: false
             }
 
-          active ->
-            # Active station — colored by AQI
+          station ->
+            # Has readings — active/inactive based on today's date check
             %{
               id: s.uid,
               lat: s.lat,
               lng: s.lng,
-              name: active.name,
-              aqi: active.aqi_value,
-              color: active.color,
-              category: active.category,
-              active: true,
-              within_50km: s.within_50km
+              name: station.name,
+              aqi: station.aqi_value,
+              color: station.color,
+              category: station.category,
+              active: station.active
             }
         end
       end)
@@ -528,9 +526,11 @@ defmodule CmAqiWeb.DashboardLive do
   end
 
   # Groups flat reading records into a map keyed by station_id.
-  # Returns ALL stations (for map data). The card scroll filters separately.
+  # A station is "active" if its most recent reading is from today (ICT / UTC+7).
   @spec group_readings_by_station(list()) :: map()
   defp group_readings_by_station(readings) do
+    today_ict = today_in_ict()
+
     readings
     |> Enum.group_by(& &1.station_id)
     |> Enum.map(fn {station_id, station_readings} ->
@@ -540,7 +540,8 @@ defmodule CmAqiWeb.DashboardLive do
       primary = pm25 || pm10
       aqi_value = if primary, do: primary.aqi_value, else: nil
       category = if primary, do: primary.category, else: nil
-      color = if aqi_value, do: Calculator.color_for_aqi(aqi_value), else: "#808080"
+      active = reading_from_today?(primary, today_ict)
+      color = if active && aqi_value, do: Calculator.color_for_aqi(aqi_value), else: "#808080"
 
       {station_id,
        %{
@@ -548,27 +549,46 @@ defmodule CmAqiWeb.DashboardLive do
          pm25: if(pm25, do: pm25.value, else: nil),
          pm10: if(pm10, do: pm10.value, else: nil),
          aqi_value: aqi_value,
-         category: category,
+         category: if(active, do: category, else: "Inactive"),
          color: color,
          latitude: if(primary, do: primary.latitude, else: nil),
          longitude: if(primary, do: primary.longitude, else: nil),
-         measured_at: if(primary, do: primary.measured_at, else: nil)
+         measured_at: if(primary, do: primary.measured_at, else: nil),
+         active: active
        }}
     end)
     |> Map.new()
   end
 
-  # Filters stations to only those within 50km of Chiang Mai (for card scroll).
-  @spec inner_stations(map()) :: map()
-  defp inner_stations(all_stations) do
-    inner_uids =
-      AqiPoller.list_all_stations()
-      |> Enum.filter(& &1.within_50km)
-      |> Enum.into(MapSet.new(), & &1.uid)
-
+  # Filters to only active stations (reading from today) for the card scroll.
+  @spec active_stations(map()) :: map()
+  defp active_stations(all_stations) do
     all_stations
-    |> Enum.filter(fn {station_id, _} -> MapSet.member?(inner_uids, station_id) end)
+    |> Enum.filter(fn {_id, s} -> s.active end)
     |> Map.new()
+  end
+
+  # Returns today's date in ICT (UTC+7).
+  defp today_in_ict do
+    DateTime.utc_now()
+    |> DateTime.add(7 * 3600, :second)
+    |> DateTime.to_date()
+  end
+
+  # Checks if a reading's measured_at is from today in ICT.
+  defp reading_from_today?(nil, _today), do: false
+
+  defp reading_from_today?(reading, today_ict) do
+    case reading.measured_at do
+      nil ->
+        false
+
+      dt ->
+        dt
+        |> DateTime.add(7 * 3600, :second)
+        |> DateTime.to_date()
+        |> Date.compare(today_ict) == :eq
+    end
   end
 
   # Formats a float value for display, or returns "—" if nil

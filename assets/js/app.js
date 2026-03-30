@@ -485,13 +485,10 @@ const Hooks = {
       data.markers.forEach(station => {
         const color = station.color || "#808080"
         const isActive = station.active
-        const isInner = station.within_50km
 
         let radius, weight, opacity, fillOpacity
-        if (isActive && isInner) {
+        if (isActive) {
           radius = 14; weight = 2; opacity = 1; fillOpacity = 0.9
-        } else if (isActive) {
-          radius = 8; weight = 1; opacity = 0.8; fillOpacity = 0.7
         } else {
           radius = 5; weight = 1; opacity = 0.4; fillOpacity = 0.3
         }
@@ -500,7 +497,7 @@ const Hooks = {
           radius, fillColor: color, color: "#fff", weight, opacity, fillOpacity,
         }).addTo(this.map)
 
-        if (isActive && isInner && station.aqi != null) {
+        if (isActive && station.aqi != null) {
           marker.bindTooltip(String(station.aqi), {
             permanent: true, direction: "center", className: "aqi-marker-label",
           })
@@ -510,7 +507,7 @@ const Hooks = {
           `<a href="/sensors/${station.id}" class="font-bold hover:underline">${station.name}</a><br/>` +
           (isActive
             ? `AQI: <strong style="color:${color}">${station.aqi || "—"}</strong><br/>${station.category || "No Data"}`
-            : `<em style="color:#999">Offline</em>`)
+            : `<em style="color:#999">Inactive</em>`)
         )
 
         if (isActive && station.id) {
