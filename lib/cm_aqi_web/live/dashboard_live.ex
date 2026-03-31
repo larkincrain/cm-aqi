@@ -184,6 +184,30 @@ defmodule CmAqiWeb.DashboardLive do
     {:noreply, socket}
   end
 
+  # Client requests chart data when a sensor popup opens on the map
+  def handle_event("request_chart_data", %{"station_id" => station_id}, socket) do
+    readings = AqiReadings.list_readings_for_station(station_id, 24)
+    pm25_readings = Enum.filter(readings, &(&1.parameter == "pm25"))
+
+    labels =
+      Enum.map(pm25_readings, fn r ->
+        r.measured_at
+        |> DateTime.add(7 * 3600, :second)
+        |> Calendar.strftime("%H:%M")
+      end)
+
+    values = Enum.map(pm25_readings, & &1.aqi_value)
+
+    socket =
+      push_event(socket, "popup_chart_data", %{
+        station_id: station_id,
+        labels: labels,
+        values: values
+      })
+
+    {:noreply, socket}
+  end
+
   # ============================================================================
   # Template (render/1)
   # ============================================================================
