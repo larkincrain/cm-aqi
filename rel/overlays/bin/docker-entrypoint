@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+# Wait for the database to be ready before running migrations.
+# The app will crash-loop if Postgres isn't accepting connections yet.
+echo "Waiting for database..."
+until /app/bin/cm_aqi eval "CmAqi.Release.migrate()" > /dev/null 2>&1; do
+  echo "Database not ready — retrying in 2s..."
+  sleep 2
+done
+
+echo "Migrations complete. Starting server..."
+exec /app/bin/server
