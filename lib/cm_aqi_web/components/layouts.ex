@@ -36,7 +36,7 @@ defmodule CmAqiWeb.Layouts do
     <header class="navbar bg-base-200 px-4 sm:px-6 lg:px-8 shadow-sm">
       <div class="flex-1">
         <a href="/" class="flex items-center gap-2 text-xl font-bold">
-          <img src={~p"/images/navbar-icon.png"} alt="Chiang Mai Air" class="h-8 w-8 rounded" />
+          <img src={~p"/images/navbar-icon.png"} alt="Chiang Mai Air" class="h-5 w-5 rounded" />
           <span>Chiang Mai Air</span>
         </a>
       </div>
