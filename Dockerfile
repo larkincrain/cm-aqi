@@ -86,6 +86,9 @@ ENV MIX_ENV="prod"
 # Copy the compiled release from the build stage
 COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/cm_aqi ./
 
+# Ensure the Docker entrypoint is executable
+RUN chmod +x /app/bin/docker-entrypoint
+
 # Run as non-root user for security
 USER nobody
 
