@@ -36,8 +36,8 @@ defmodule CmAqiWeb.Layouts do
     <header class="navbar bg-base-200 px-4 sm:px-6 lg:px-8 shadow-sm">
       <div class="flex-1">
         <a href="/" class="flex items-center gap-2 text-xl font-bold">
-          <span class="text-2xl">🌬️</span>
-          <span>CM AQI</span>
+          <img src={~p"/images/navbar-icon.png"} alt="Chiang Mai Air" class="h-8 w-8 rounded" />
+          <span>Chiang Mai Air</span>
         </a>
       </div>
       <div class="flex-none">
